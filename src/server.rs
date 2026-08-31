@@ -52,7 +52,7 @@ use crate::vault_migration::{LegacyMigrationInput, LegacyMigrationOutcome, migra
 use crate::vault_registry::{VaultRegistryState, VaultRegistryStore};
 use crate::vault_runtime::{
     VaultCollectionRuntime, VaultRuntime, VaultSource, dispatch_managed_git_turn,
-    dispatch_vault_index_turn_with_progress,
+    dispatch_vault_index_turn_with_progress, dispatch_webdav_turn,
 };
 use crate::vault_work::{VaultWorkCoordinator, VaultWorkError, VaultWorkKind, VaultWorkRequest};
 
@@ -109,6 +109,15 @@ impl VaultWorkDispatchContext {
                     Some(Arc::new(move |progress| {
                         progress_startup.set_indexing(progress);
                     })),
+                    request,
+                )
+                .await
+            }
+            VaultWorkKind::WebDav => {
+                dispatch_webdav_turn(
+                    &self.vaults,
+                    &self.registry,
+                    &self.work,
                     request,
                 )
                 .await

@@ -58,29 +58,28 @@ every ADR-01/03/10/11 invariant and needs no new write model.
   The real gdrive-read win is config (rclone `--vfs-cache-mode full`, applied).
 - **Phase B — WebDAV client** (`src/vault/remote/mod.rs`): list/fetch/put/
   delete/mkdir, Basic auth, PROPFIND multistatus parsing + percent-decoding, URL
-  encoding. **DONE** — live-verified against `rclone serve webdav` (PUT→GET→
-  list round-trip, encoded filenames, auth).
-- **Phase C — `VaultSource::WebDav` + mirror checkout**: **backend DONE** —
-  registry variant (`url`, optional `vault_subdirectory`, `poll_interval_secs`),
-  `#[serde(default)]` poll interval, URL validation (http(s), no inline creds,
-  no query/fragment), remote-backed credentials acceptance, mirror path under
-  state dir (`<state>/vaults/<id>/webdav`), identity comparison, and every
-  `match VaultSource` site (registry, vault_runtime, server posture, git-dispatch
-  no-op). Compiles; module-map green. **Frontend (settings UI) still pending.**
-- **Phase D — WebDAV sync turn**: **sync engine DONE** (`src/vault/remote/sync.rs`,
-  boxed-recursive pull + push-new, mirrors ManagedGit execution model). **LIVE-
-  VERIFIED** against `rclone serve webdav`: pulled a 3-file/2-dir vault into an
-  empty mirror, pushed new local notes + created a new directory remotely, and
-  a fresh mirror re-pulled everything. **Work-kind dispatch/scheduler wiring
-  still pending** (route WebDav through `VaultWorkCoordinator` + a poller like
-  `ManagedGitScheduler`).
-- **Phase E — write backend**: writes already run on the local mirror via the
-  existing atomic `vault/write/` layer (no new write model); the sync turn's
-  push-half propagates them up. **Pending: confirm propagation end-to-end.**
+  encoding. **DONE** — live-verified against `rclone serve webdav`.
+- **Phase C — `VaultSource::WebDav` + mirror checkout**: **DONE** —
+  backend registry variant (`url`, optional `vault_subdirectory`,
+  `poll_interval_secs`), URL validation, remote-backed credentials, mirror path
+  under state dir, identity comparison, all match sites. Frontend: webdav as a
+  third `CreateVaultKind` in the Add-a-Vault dialog (WebDAV URL + optional
+  subdir + sign-in + sync schedule, Git-behaviour control hidden) and the edit
+  flow's source draft mapping. Frontend `typecheck`, `build`, and existing
+  tests all green.
+- **Phase D — WebDAV sync turn**: **DONE** — recursive sync engine
+  (`src/vault/remote/sync.rs`, live-verified pull+push against rclone) plus
+  wiring: `VaultWorkKind::WebDav`, `dispatch_webdav_turn` (resolves source,
+  credentials, mirror; holds the mutation lock; runs sync; then requests an
+  Index turn), and the server dispatch arm.
+- **Phase E — write backend**: writes run on the local mirror via the existing
+  atomic `vault/write/` layer (no new write model); the sync turn's push-half
+  propagates them to the remote (verified in the live sync run). **DONE as
+  designed** — a WebDAV-sourced Vault is browsable/searchable (mirror) and
+  writable (mirror + push), with background remote sync.
 
 ## First deliverable (this session)
-Corrected design doc + Phase B client + Phase C backend + Phase D sync engine,
-all compiling, with the client and sync live-verified against a real
-`rclone serve webdav` endpoint. No ADR-01 change is proposed. Remaining:
-Phase C settings UI, Phase D dispatch/scheduler wiring, Phase E write
-confirmation.
+Corrected design doc + Phases B–E of native WebDAV support. Backend compiles
+(`cargo check`, `check --tests`), module-map green, sync engine live-verified
+against `rclone serve webdav`, frontend typecheck/build/tests green. No ADR-01
+change; WebDAV is deliberately NOT git (not scheduler-tracked, no git turn).

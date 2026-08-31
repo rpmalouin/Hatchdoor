@@ -24,10 +24,14 @@ import type { VaultSummary } from "../../types";
 const KIND_LABEL: Record<CreateVaultKind, string> = {
   own: "A folder on this server",
   managed: "A managed Git checkout",
+  webdav: "A WebDAV endpoint",
 };
 
 function defaultBehaviorFor(kind: CreateVaultKind): GitBehavior {
-  return kind === "managed" ? "pull_only" : "no_git";
+  // WebDAV is treated as remote-backed so the sign-in and sync-schedule
+  // fields render; it has no Git behaviour of its own (the behaviour control
+  // is hidden for it).
+  return kind === "managed" || kind === "webdav" ? "pull_only" : "no_git";
 }
 
 /** The one creation flow every `Add a Vault` entry point opens (issue #153):
@@ -236,56 +240,66 @@ export function VaultCreationDialog({
           </label>
         ) : null}
 
-        <div className="settings-row">
-          <span>
-            <span className="settings-row-label">Git behaviour</span>
-          </span>
-          <div
-            className="settings-segmented"
-            role="group"
-            aria-label="Git behaviour"
-          >
-            {behaviorOpts.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                aria-pressed={behavior === item.id}
-                onClick={() => selectBehavior(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
+        {kind !== "webdav" ? (
+          <div className="settings-row">
+            <span>
+              <span className="settings-row-label">Git behaviour</span>
+            </span>
+            <div
+              className="settings-segmented"
+              role="group"
+              aria-label="Git behaviour"
+            >
+              {behaviorOpts.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={behavior === item.id}
+                  onClick={() => selectBehavior(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         {remoteBacked ? (
           <>
             <label className="settings-row">
               <span>
-                <span className="settings-row-label">Repository URL</span>
+                <span className="settings-row-label">
+                  {kind === "webdav" ? "WebDAV URL" : "Repository URL"}
+                </span>
               </span>
               <input
                 className="settings-input"
-                aria-label="Repository URL"
+                aria-label={kind === "webdav" ? "WebDAV URL" : "Repository URL"}
                 value={repoUrlDraft}
                 onChange={(event) => setRepoUrlDraft(event.target.value)}
               />
             </label>
-            <label className="settings-row">
-              <span>
-                <span className="settings-row-label">Branch (optional)</span>
-              </span>
-              <input
-                className="settings-input"
-                aria-label="Branch"
-                value={branchDraft}
-                onChange={(event) => setBranchDraft(event.target.value)}
-              />
-            </label>
+            {kind !== "webdav" ? (
+              <label className="settings-row">
+                <span>
+                  <span className="settings-row-label">
+                    Branch (optional)
+                  </span>
+                </span>
+                <input
+                  className="settings-input"
+                  aria-label="Branch"
+                  value={branchDraft}
+                  onChange={(event) => setBranchDraft(event.target.value)}
+                />
+              </label>
+            ) : null}
             <label className="settings-row">
               <span>
                 <span className="settings-row-label">
-                  Folder within the repository (optional)
+                  {kind === "webdav"
+                    ? "Folder within the WebDAV endpoint (optional)"
+                    : "Folder within the repository (optional)"}
                 </span>
               </span>
               <input

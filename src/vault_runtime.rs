@@ -2335,5 +2335,106 @@ fn publish_local_content_after_git_success(control_block: &VaultControlBlock) {
     let _ = control_block.set_local_content_status(status, error);
 }
 
+/// Execute one `VaultWorkKind::WebDav` turn for exactly one active Vault.
+///
+/// A WebDAV-sourced Vault is one that carries `VaultSource::WebDav`. Its
+/// "authoritative read path" is a local mirror checkout (see
+/// `VaultRegistryStore::vault_path`); this turn reconciles that mirror with
+/// the remote WebDAV collection (pull remote content, push new local notes)
+/// under the Vault's mutation lock, then requests an Index turn so the SQLite
+/// read model rebuilds from the refreshed mirror. This mirrors the ManagedGit
+/// execution model: a background poll work kind under the per-Vault mutation
+/// boundary, never serving a per-request note read directly (ADR-01).
+pub async fn dispatch_webdav_turn(
+    collection: &VaultCollectionRuntime,
+    registry: &VaultRegistryStore,
+    coordinator: &VaultWorkCoordinator,
+    request: VaultWorkRequest,
+) -> Result<(), VaultWorkError> {
+    let vault_id = request.vault_id();
+    let Some(control_block) = collection.runtime(vault_id) else {
+        return Ok(());
+    };
+
+    // Resolve the source; only WebDav sources run here. Anything else is a
+    // harmless no-op (a stray kind on a non-WebDAV Vault).
+    let (url, vault_subdirectory) = match control_block.definition().source() {
+        crate::vault_registry::VaultSource::WebDav { url, vault_subdirectory, .. } => {
+            (url.clone(), vault_subdirectory.clone())
+        }
+        _ => return Ok(()),
+    };
+
+    // Resolve the mirror (authoritative local path per ADR-01).
+    let mirror = control_block.vault_path().to_path_buf();
+
+    // Resolve credentials (Basic auth) from the registry.
+    let credentials = match registry.https_credentials(vault_id) {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            return Err(VaultWorkError::new(
+                "webdav_registry_unavailable",
+                error.to_string(),
+                true,
+            ));
+        }
+    };
+    let client = match crate::vault::remote::WebDavClient::new(
+        &url,
+        credentials.map(|c| crate::vault::remote::WebDavCredentials {
+            username: c.username,
+            password: c.token,
+        }),
+    ) {
+        Ok(client) => client,
+        Err(error) => {
+            return Err(VaultWorkError::new(
+                "webdav_client_init",
+                error.to_string(),
+                false,
+            ));
+        }
+    };
+
+    // Hold the mutation lock for the whole turn, like Git turns do, so a
+    // foreground Markdown write can never race the sync's mirror mutations.
+    let mutation_guard = match control_block.acquire_mutation().await {
+        Ok(guard) => guard,
+        Err(error) => {
+            return Err(VaultWorkError::new(
+                "webdav_mutation_guard",
+                error.message,
+                error.retryable,
+            ));
+        }
+    };
+
+    // Run the sync directly on the async runtime. `sync_once` is async and
+    // performs WebDAV network I/O (via reqwest) with the mirror filesystem
+    // writes; reqwest handles the async client, and the writes are small
+    // (Markdown notes), so no separate blocking pool is needed here.
+    let root_rel = vault_subdirectory
+        .as_deref()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut outcome = crate::vault::remote::sync::WebDavSyncOutcome::default();
+    let result = crate::vault::remote::sync::Sync::sync_once(&client, &mirror, &root_rel, &mut outcome)
+        .await;
+
+    match result {
+        Ok(()) => {
+            drop(mutation_guard);
+            // Refresh the read model so the vault reflects the new mirror.
+            coordinator.request(vault_id, VaultWorkKind::Index);
+            Ok(())
+        }
+        Err(error) => Err(VaultWorkError::new(
+            "webdav_sync_failed",
+            error.to_string(),
+            true,
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests;

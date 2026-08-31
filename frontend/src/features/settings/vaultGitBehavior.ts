@@ -59,14 +59,16 @@ export function sourceLabel(source: VaultSource | undefined): string {
   if (!source) return "Vault source";
   if (source.type === "local") return "A folder on this server";
   if (source.type === "existing_git") return "An existing Git folder";
+  if (source.type === "webdav") return "A WebDAV endpoint";
   return "A managed Git checkout";
 }
 
 /** Issue #121: what the record stores is two facts (where the folder came
  * from, and what Git does with it), not one four-valued field. This reads
- * the second fact back off a source. */
+ * the second fact back off a source. A WebDAV source has no Git behaviour. */
 export function behaviorOf(source: VaultSource): GitBehavior {
   if (source.type === "local") return "no_git";
+  if (source.type === "webdav") return "no_git";
   return source.mode;
 }
 
@@ -83,6 +85,8 @@ export function behaviorOptions(
     { id: "two_way" as const, label: "Two-way" },
   ];
   if (source.type === "managed_git") return remote;
+  // A WebDAV source has no Git behaviour; the create flow hides this control.
+  if (source.type === "webdav") return [];
   return [
     { id: "no_git" as const, label: "No Git" },
     { id: "local_history" as const, label: "Local history" },
@@ -106,6 +110,9 @@ export function buildSourceForBehavior(
       ? { ...current, mode: behavior }
       : current;
   }
+  // A WebDAV source has no Git behaviour; any behaviour selection leaves it
+  // unchanged (the create flow hides the behaviour control for webdav).
+  if (current.type === "webdav") return current;
   if (behavior === "no_git") {
     const path =
       current.type === "local" ? current.path : current.repository_path;
@@ -142,6 +149,16 @@ export function withIdentityFields(
   const branch = fields.branch.trim() || undefined;
   const vault_subdirectory = fields.subdirectory.trim() || undefined;
   const poll_interval_secs = clampPollMinutes(String(fields.pollMinutes)) * 60;
+  if (base.type === "webdav") {
+    // WebDAV has no Git branch/repository_url; only the URL, optional
+    // subdirectory and schedule are identity fields.
+    return {
+      ...base,
+      url: fields.repositoryUrl.trim(),
+      vault_subdirectory,
+      poll_interval_secs,
+    };
+  }
   if (base.type === "managed_git") {
     return {
       ...base,
@@ -172,6 +189,12 @@ function sourceIdentity(source: VaultSource): readonly unknown[] {
       source.repository_path,
       source.repository_url ?? null,
       source.branch ?? null,
+      source.vault_subdirectory ?? null,
+    ];
+  if (source.type === "webdav")
+    return [
+      "webdav",
+      source.url,
       source.vault_subdirectory ?? null,
     ];
   return [
@@ -209,6 +232,7 @@ export const REPOSITORY_URL_REQUIRED_MESSAGE =
  * `validateCreateSource` so the rule and its message can't quietly diverge
  * between the two. */
 export function missingRequiredRepositoryUrl(source: VaultSource): boolean {
+  if (source.type === "webdav") return !source.url.trim();
   return (
     source.type !== "local" &&
     source.mode !== "local_history" &&

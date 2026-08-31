@@ -94,6 +94,12 @@ export type VaultSource =
       vault_subdirectory?: string;
       mode: VaultGitMode;
       poll_interval_secs: number;
+    }
+  | {
+      type: "webdav";
+      url: string;
+      vault_subdirectory?: string;
+      poll_interval_secs: number;
     };
 
 /** One Vault's discovery entry from `GET /api/v1/vaults`. The four status

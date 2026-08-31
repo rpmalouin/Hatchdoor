@@ -571,6 +571,7 @@ synchronized; no automated cross-language schema check currently exists.
 - `src/vault/links.rs`
 - `src/vault/paths.rs`
 - `src/vault/remote/mod.rs`
+- `src/vault/remote/sync.rs`
 - `src/vault/seed.rs`
 - `src/vault/types.rs`
 - `src/vault/tests.rs`

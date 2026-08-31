@@ -19,6 +19,8 @@ pub enum VaultWorkKind {
     Git,
     /// Index construction, including embedding work.
     Index,
+    /// WebDAV remote↔mirror sync for a WebDAV-sourced Vault.
+    WebDav,
     /// Explicit repair work.
     Repair,
 }
