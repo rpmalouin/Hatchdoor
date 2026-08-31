@@ -9,7 +9,7 @@
   <a href="https://hatchdoor.battercloud.cc"><img alt="Live demo" src="https://img.shields.io/badge/live_demo-hatchdoor.battercloud.cc-e4572e"></a>
   <a href="https://docs-hatchdoor.battercloud.cc"><img alt="Documentation" src="https://img.shields.io/badge/docs-docs--hatchdoor.battercloud.cc-6f42c1"></a>
   <a href="https://hub.docker.com/r/battermanz/hatchdoor"><img alt="Docker Hub" src="https://img.shields.io/docker/v/battermanz/hatchdoor?sort=semver&label=docker%20hub&color=2496ed"></a>
-  <a href="https://github.com/BattermanZ/Hatchdoor/blob/main/Dockerfile"><img alt="Rootless and distroless image" src="https://img.shields.io/badge/image-rootless_%26_distroless-2ea44f"></a>
+  <a href="https://github.com/BatterWorks/Hatchdoor/blob/main/Dockerfile"><img alt="Rootless and distroless image" src="https://img.shields.io/badge/image-rootless_%26_distroless-2ea44f"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
 </p>
 
@@ -17,8 +17,9 @@
 
 > **This is `rpmalouin/Hatchdoor`, a fork.** It tracks upstream
 > [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor) and carries
-> one delta: a dependency security-hardening commit (see [`FORK.md`](FORK.md)).
-> Both the code and the `battermanz/hatchdoor` Docker image are unchanged.
+> a small, documented set of deltas on top: a dependency security-hardening
+> commit and native WebDAV vault support (see [`FORK.md`](FORK.md)). Both the
+> code and the `battermanz/hatchdoor` Docker image are otherwise unchanged.
 
 Hatchdoor is a self-hosted, **agent-native** web app for your Obsidian-style
 Markdown vault. Browse, search, and edit your notes in a fast web UI, and give
