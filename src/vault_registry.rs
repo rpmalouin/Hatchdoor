@@ -210,6 +210,16 @@ pub enum VaultSource {
         #[serde(default = "default_managed_git_poll_interval_secs")]
         poll_interval_secs: u64,
     },
+    WebDav {
+        url: String,
+        /// Optional subdirectory of the WebDAV endpoint that is the vault root.
+        /// Absent means the endpoint root is the vault.
+        vault_subdirectory: Option<PathBuf>,
+        /// How often the WebDAV sync turn polls remote changes. Defaulted on
+        /// deserialization (see the ManagedGit `poll_interval_secs` precedent).
+        #[serde(default = "default_managed_git_poll_interval_secs")]
+        poll_interval_secs: u64,
+    },
 }
 
 impl fmt::Debug for VaultSource {
@@ -249,6 +259,14 @@ impl fmt::Debug for VaultSource {
                 .field("mode", mode)
                 .field("poll_interval_secs", poll_interval_secs)
                 .finish(),
+            Self::WebDav {
+                url, vault_subdirectory, poll_interval_secs,
+            } => formatter
+                .debug_struct("WebDav")
+                .field("url", url)
+                .field("vault_subdirectory", vault_subdirectory)
+                .field("poll_interval_secs", poll_interval_secs)
+                .finish(),
         }
     }
 }
@@ -273,7 +291,11 @@ impl VaultSource {
             | Self::ExistingGit {
                 mode: VaultGitMode::LocalHistory,
                 ..
-            } => None,
+            }
+            // WebDAV carries a poll interval for its own sync turn (Phase D),
+            // but it is NOT git and must never be routed through
+            // `ManagedGitScheduler` / the git sync/retry handlers.
+            | Self::WebDav { .. } => None,
         }
     }
 }
@@ -1142,6 +1164,21 @@ impl VaultRegistryStore {
                         repository.join(subdirectory)
                     })
             }
+            VaultSource::WebDav {
+                vault_subdirectory, ..
+            } => {
+                // A WebDAV source keeps a local mirror checkout (the
+                // authoritative read path per ADR-01) under the state dir,
+                // mirroring the ManagedGit checkout layout.
+                let state_directory = self.path.parent().unwrap_or_else(|| Path::new("."));
+                let mirror = state_directory
+                    .join("vaults")
+                    .join(vault_id.to_string())
+                    .join("webdav");
+                vault_subdirectory
+                    .as_ref()
+                    .map_or(mirror.clone(), |subdirectory| mirror.join(subdirectory))
+            }
         }
     }
 
@@ -1259,6 +1296,18 @@ fn same_source_identity(first: &VaultSource, second: &VaultSource) -> bool {
                 && first_branch == second_branch
                 && first_subdirectory == second_subdirectory
         }
+        (
+            VaultSource::WebDav {
+                url: first_url,
+                vault_subdirectory: first_subdirectory,
+                ..
+            },
+            VaultSource::WebDav {
+                url: second_url,
+                vault_subdirectory: second_subdirectory,
+                ..
+            },
+        ) => first_url == second_url && first_subdirectory == second_subdirectory,
         _ => false,
     }
 }
@@ -1308,6 +1357,18 @@ fn normalize_source(source: VaultSource) -> Result<VaultSource, VaultRegistryErr
             mode,
             poll_interval_secs,
         }),
+        VaultSource::WebDav {
+            url,
+            vault_subdirectory,
+            poll_interval_secs,
+        } => {
+            validate_webdav_url(&url)?;
+            Ok(VaultSource::WebDav {
+                url,
+                vault_subdirectory,
+                poll_interval_secs,
+            })
+        },
         VaultSource::ExistingGit {
             repository_path,
             repository_url,
@@ -1448,6 +1509,24 @@ fn normalize_structural_source(source: VaultSource) -> Result<VaultSource, Vault
                 poll_interval_secs,
             })
         }
+        VaultSource::WebDav {
+            url,
+            vault_subdirectory,
+            poll_interval_secs,
+        } => {
+            if poll_interval_secs < MIN_MANAGED_GIT_POLL_INTERVAL_SECS {
+                return Err(invalid_source(&format!(
+                    "WebDAV poll interval must be at least {MIN_MANAGED_GIT_POLL_INTERVAL_SECS} seconds"
+                )));
+            }
+            Ok(VaultSource::WebDav {
+                url: normalize_webdav_url(url)?,
+                vault_subdirectory: vault_subdirectory
+                    .map(normalize_relative_subdirectory)
+                    .transpose()?,
+                poll_interval_secs,
+            })
+        }
     }
 }
 
@@ -1523,6 +1602,7 @@ fn source_is_remote_backed(source: &VaultSource) -> bool {
     matches!(
         source,
         VaultSource::ManagedGit { .. }
+            | VaultSource::WebDav { .. }
             | VaultSource::ExistingGit {
                 repository_url: Some(_),
                 ..
@@ -1538,6 +1618,52 @@ fn normalize_https_repository_url(repository_url: String) -> Result<String, Vaul
         ));
     }
     Ok(repository_url)
+}
+
+/// Normalize and validate a WebDAV endpoint URL. WebDAV allows either `http://`
+/// or `https://` (unlike the credential-free-HTTPS-only Git validator above),
+/// but never inline credentials, never a query/fragment, and no whitespace.
+fn normalize_webdav_url(url: String) -> Result<String, VaultRegistryError> {
+    let url = url.trim().trim_end_matches('/').to_string();
+    if !is_safe_webdav_url(&url) {
+        return Err(invalid_source(
+            "WebDAV URL must be http(s):// without inline credentials, query, or fragment",
+        ));
+    }
+    Ok(url)
+}
+
+/// Shared WebDAV input validation, mirroring the managed-Git validator's
+/// credential-free rule. Disallows `user@host` and any query/fragment/whitespace
+/// so an embedded credential can never be persisted in the URL itself.
+fn is_safe_webdav_url(url: &str) -> bool {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return false;
+    }
+    let remainder = if let Some(rest) = url.strip_prefix("https://") {
+        rest
+    } else {
+        url.strip_prefix("http://").unwrap_or("")
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or("");
+    !(authority.is_empty()
+        || authority.contains('@')
+        || url.contains(['?', '#', '\\'])
+        || url
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control()))
+        && valid_https_authority(authority)
+        && valid_percent_encoding(url)
+}
+
+fn validate_webdav_url(url: &str) -> Result<(), VaultRegistryError> {
+    if is_safe_webdav_url(url) {
+        Ok(())
+    } else {
+        Err(invalid_source(
+            "WebDAV URL must be http(s):// without inline credentials, query, or fragment",
+        ))
+    }
 }
 
 /// Shared managed-Git input validation. Callers must never accept a broader
@@ -1687,6 +1813,7 @@ fn stored_source_is_valid(source: &VaultSource) -> bool {
                 && normalized_absolute_path(repository_path) == *repository_path
         }
         VaultSource::ManagedGit { .. } => true,
+        VaultSource::WebDav { .. } => true,
     }
 }
 

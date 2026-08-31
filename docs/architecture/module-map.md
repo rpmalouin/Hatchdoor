@@ -570,6 +570,7 @@ synchronized; no automated cross-language schema check currently exists.
 - `src/vault/layers.rs`
 - `src/vault/links.rs`
 - `src/vault/paths.rs`
+- `src/vault/remote/mod.rs`
 - `src/vault/seed.rs`
 - `src/vault/types.rs`
 - `src/vault/tests.rs`
@@ -586,7 +587,11 @@ is shared with `handlers/assets.rs`, so resolution can never name a path the
 asset route would refuse.
 
 **Consumed dependencies:** filesystem traversal and parsing; `cache::parse`
-currently supplies content hashing to the index.
+currently supplies content hashing to the index. `vault/remote` additionally
+uses `reqwest` (already a transitive dep) and `roxmltree` for the WebDAV
+source's remote client; the WebDAV source itself is a later packet that reuses
+Hatchdoor's ManagedGit pattern (local mirror checkout + background sync) rather
+than serving exact-note reads from the disposable cache (ADR-01).
 
 **Consumers:** cache population, handlers, MCP reads, write coordination,
 watching, and application startup.

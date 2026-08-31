@@ -1684,6 +1684,10 @@ fn collection_capabilities(
         RegistryVaultSource::Local { .. } => None,
         RegistryVaultSource::ExistingGit { mode, .. }
         | RegistryVaultSource::ManagedGit { mode, .. } => Some(*mode),
+        // WebDAV has no git versioning; it is a remote-backed mirror source.
+        // Browse/mutate mirror the local mirror checkout (ADR-01), with pull
+        // driven by the WebDAV sync turn (a later VaultWorkKind), not Git.
+        RegistryVaultSource::WebDav { .. } => None,
     };
     let pull_only = git_mode == Some(VaultGitMode::PullOnly);
     VaultCapabilities {
@@ -2140,6 +2144,13 @@ where
             }
             // `Local` has no Git turn at all.
             RegistryVaultSource::Local { .. } => {
+                return Ok(());
+            }
+            // WebDAV sources have no git turn; their remote sync is a distinct
+            // WebDAV sync turn (Phase D of the WebDAV work packet). A stray
+            // Git-kind request on a WebDAV source is a harmless no-op, like
+            // Local.
+            RegistryVaultSource::WebDav { .. } => {
                 return Ok(());
             }
         };

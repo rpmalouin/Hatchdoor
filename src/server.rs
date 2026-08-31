@@ -264,7 +264,8 @@ pub fn check_demo_mode_registry_posture(
         let mode = match definition.source() {
             crate::vault_registry::VaultSource::ExistingGit { mode, .. }
             | crate::vault_registry::VaultSource::ManagedGit { mode, .. } => Some(*mode),
-            crate::vault_registry::VaultSource::Local { .. } => None,
+            crate::vault_registry::VaultSource::Local { .. }
+            | crate::vault_registry::VaultSource::WebDav { .. } => None,
         };
         if mode == Some(crate::vault_registry::VaultGitMode::TwoWay) {
             return Err(format!(

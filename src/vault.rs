@@ -3,6 +3,7 @@ mod index;
 mod layers;
 mod links;
 mod paths;
+pub(crate) mod remote;
 mod seed;
 #[cfg(test)]
 mod tests;
