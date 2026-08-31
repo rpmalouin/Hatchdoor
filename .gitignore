@@ -33,3 +33,9 @@ docs/superpowers/specs/2026-07-25-eval-query-set-design.md
 
 # just dev-server PID files and logs
 /.dev/
+# Added by code-review-graph
+.code-review-graph/
+
+# Repo-local operator notes. MEMORY.md always stays local/untracked;
+# committed documentation lives in FORK.md (clean, no local information).
+MEMORY.md
