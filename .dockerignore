@@ -17,3 +17,20 @@ docs/*
 !docs/starter-vault/
 !docs/starter-vault/**
 AGENTS.md
+
+# Local agent scaffolding / editor config — never part of the image context.
+.gitignore
+*.md~
+.codebuddy
+.cursorrules
+.gemini
+.github
+.kiro
+.mcp.json
+.qoder
+.windsurfrules
+CLAUDE.md
+CODEBUDDY.md
+GEMINI.md
+QODER.md
+opencode.jsonc
