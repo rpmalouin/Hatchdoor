@@ -13,7 +13,9 @@ services:
       VAULT_PATH: /data/vault
       HATCHDOOR_CACHE_DB: /data/cache/hatchdoor-cache.sqlite3
     ports:
-      - "42824:42824"
+      # Safe default: only the Docker host can connect. To expose Hatchdoor to
+      # a trusted LAN, replace with "42824:42824" (see the install guide).
+      - "127.0.0.1:42824:42824"
     volumes:
       - ${HOST_VAULT_PATH:-./vault}:/data/vault
       - ${HOST_CACHE_PATH:-./data/cache}:/data/cache
