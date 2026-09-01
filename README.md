@@ -18,14 +18,23 @@
 > **This is `rpmalouin/Hatchdoor`, a fork.** It tracks upstream
 > [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor) and carries
 > a small, documented set of deltas on top: a dependency security-hardening
-> commit and native WebDAV vault support (see [`FORK.md`](FORK.md)). Both the
-> code and the `battermanz/hatchdoor` Docker image are otherwise unchanged.
+> commit, native WebDAV vault support, and fuse-vault write/index resilience
+> (see [`FORK.md`](FORK.md)). The reference deployment of this fork is the
+> **gdrive build**: a Google Drive vault (`gdrive:MyObsidian`) served to
+> Hatchdoor through an `rclone-webdav` sidecar, synced into a local mirror, and
+> exposed to AI agents over MCP. The code and the `battermanz/hatchdoor` Docker
+> image are otherwise unchanged.
 
 > **Hermes integration:** this fork ships with a complete, verified playbook for
 > wiring Hatchdoor's MCP server into [Hermes Agent](https://hermes-agent.nousresearch.com) —
 > registration and token sync, the real 35-tool surface, operation templates,
 > hatchdoor-only access enforcement, a vault-only role agent, and drift
 > detection. See [`HERMES.md`](HERMES.md).
+
+> **Google Drive vault:** the live deployment runs the WebDAV source against a
+> Google Drive remote. The container stack (`hatchdoor` + `rclone-webdav`
+> sidecar) and the MCP wiring that makes agents read/write that vault are
+> documented in [`FORK.md`](FORK.md) → *The gdrive build*.
 
 Hatchdoor is a self-hosted, **agent-native** web app for your Obsidian-style
 Markdown vault. Browse, search, and edit your notes in a fast web UI, and give

@@ -1,30 +1,55 @@
 services:
   hatchdoor:
-    image: battermanz/hatchdoor:latest
+    # The gdrive build (WebDAV vault source) is a fork feature — the upstream
+    # battermanz/hatchdoor image does not include it. Build from this repo so
+    # the WebDAV + fuse-resilience deltas are baked in. (Swap `build` for
+    # `image: battermanz/hatchdoor:latest` only if you don't need WebDAV.)
+    build:
+      context: .
+    image: hatchdoor:local
     container_name: hatchdoor
-    env_file:
-      - .env
     environment:
-      # This is the Docker deployment contract. Keep container paths and port
-      # aligned with the mounts and published port below; optional operator
-      # overrides belong in .env only when they intentionally pin a setting.
+      # Deployment contract. Compose reads these from .env next to this file
+      # (see .env.example); a missing .env falls back to the defaults below.
       HOST: 0.0.0.0
       PORT: "42824"
       VAULT_PATH: /data/vault
       HATCHDOOR_CACHE_DB: /data/cache/hatchdoor-cache.sqlite3
+
+      # Web access. Required for a non-loopback bind; first run without it
+      # prints a fresh token to add to .env (see the README).
+      HATCHDOOR_WEB_BEARER_TOKEN: ${HATCHDOOR_WEB_BEARER_TOKEN:-}
+      HATCHDOOR_DEMO_MODE: ${HATCHDOOR_DEMO_MODE:-false}
+
+      # MCP agent access (see HERMES.md). MCP is off by default; when enabled
+      # it needs its own bearer token, separate from the web token.
+      HATCHDOOR_MCP_ENABLED: ${HATCHDOOR_MCP_ENABLED:-false}
+      HATCHDOOR_MCP_WRITE_ENABLED: ${HATCHDOOR_MCP_WRITE_ENABLED:-false}
+      HATCHDOOR_MCP_BEARER_TOKEN: ${HATCHDOOR_MCP_BEARER_TOKEN:-}
+      HATCHDOOR_MCP_ALLOWED_ORIGINS: ${HATCHDOOR_MCP_ALLOWED_ORIGINS:-}
+
+      TZ: ${TZ:-UTC}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
     ports:
       # Safe default: only the Docker host can connect. To expose Hatchdoor to
       # a trusted LAN, replace with "42824:42824" (see the install guide).
       - "127.0.0.1:42824:42824"
     volumes:
-      - ${HOST_VAULT_PATH:-./vault}:/data/vault
+      # In the gdrive build the vault is a WebDAV source synced into a local
+      # mirror under /data/state — the /data/vault mount is unused. Keep it
+      # only for a plain local Markdown vault:
+      # - ${HOST_VAULT_PATH:-./vault}:/data/vault
       - ${HOST_CACHE_PATH:-./data/cache}:/data/cache
-      # Vault identities and source definitions are authoritative instance
-      # state. Keep this mount across upgrades; it is not a rebuildable cache.
+      # Vault identities, source definitions, and the WebDAV mirror are
+      # authoritative instance state. Keep this mount across upgrades; it is
+      # not a rebuildable cache.
       - ${HOST_STATE_PATH:-./data/state}:/data/state
       # Model downloads and the local Gemma acceptance record persist across
       # image upgrades. Bind-mount this directory to avoid re-downloading.
       - ${HOST_MODELS_PATH:-./models}:/models
+    depends_on:
+      - rclone-webdav
     restart: unless-stopped
     healthcheck:
       # Distroless runtime has no shell/curl, so the binary probes its own
@@ -34,3 +59,34 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+
+  # Google Drive front door for the gdrive build: rclone serves the Drive
+  # remote (gdrive:MyObsidian by default) over WebDAV so Hatchdoor can sync it
+  # into a local mirror. rclone talks to the Drive API over HTTPS — no fuse
+  # mount involved. First create the rclone remote and config:
+  #   docker run --rm -v "$PWD/rclone:/config/rclone" rclone/rclone config
+  # then register the vault in Hatchdoor (Settings → Add a Vault → WebDAV
+  # endpoint): url http://rclone-webdav:42825, user/pass = WEBDAV_USER/PASS.
+  rclone-webdav:
+    image: rclone/rclone:latest
+    container_name: rclone-webdav
+    restart: unless-stopped
+    command:
+      - serve
+      - webdav
+      - ${RCLONE_REMOTE:-gdrive:MyObsidian}
+      - --addr
+      - :42825
+      - --user
+      - ${WEBDAV_USER}
+      - --pass
+      - ${WEBDAV_PASS}
+      - --vfs-cache-mode
+      - off
+      - --poll-interval
+      - 15s
+    volumes:
+      # rclone config (holds the Drive OAuth token — keep ./rclone out of git
+      # and out of the image build context; both are handled by .gitignore and
+      # .dockerignore).
+      - ./rclone:/config/rclone

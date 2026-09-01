@@ -14,10 +14,17 @@ Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
 
 - Container `hatchdoor` (image `hatchdoor:local`, built from the fork at
   `/appdata/Hatchdoor`), HTTP on port 42824, MCP route `http://127.0.0.1:42824/mcp`.
-- The vault is an Obsidian-style Markdown collection on a **rclone fuse
-  mount** of a Google Drive remote, mounted at `/mnt/gdrive` on the host and
-  bound into the container as `/data/vault`. Hatchdoor owns vault
-  consistency — never touch that mount directly.
+- The vault is a **Google Drive vault** (`gdrive:MyObsidian`) served to
+  Hatchdoor by the `rclone-webdav` sidecar container (rclone `serve webdav`
+  on `:42825`, creds `WEBDAV_USER`/`WEBDAV_PASS` from the stack `.env`).
+  Hatchdoor registers it as a `web_dav` source
+  (`url: http://rclone-webdav:42825`, `poll_interval_secs: 300`, vault id
+  `0851e3e7-2daf-4e73-aff2-f074f282c5c6`) and syncs it to a **local mirror** at
+  `<STATE>/vaults/<id>/webdav` (container `/data/state/vaults/<id>/webdav`).
+  Reads/writes hit the mirror; the Drive remote is only touched through the
+  WebDAV sidecar. Hatchdoor owns mirror consistency — never touch the remote
+  or the mirror directly. (The old `/data/vault` fuse bind and `/mnt/gdrive`
+  mount are legacy; the active vault path is the WebDAV mirror.)
 - Server-side env gates (compose `.env`): `HATCHDOOR_MCP_ENABLED=true`,
   `HATCHDOOR_MCP_WRITE_ENABLED=true` (gates the write tools),
   `HATCHDOOR_MCP_BEARER_TOKEN`, `HATCHDOOR_MCP_ALLOWED_ORIGINS`.
@@ -164,8 +171,10 @@ enable linger). Verify with `hermes gateway status`.
 
 ## 8. Fork fixes and rebuild (hatchdoor:local)
 
-The fork `/appdata/Hatchdoor` carries two fixes (commit `cecadd1`) that the
-rclone-mounted vault requires:
+The fork `/appdata/Hatchdoor` carries the WebDAV deltas that make the gdrive
+build work (commits `02dd552`, `5443413`, `f13441c`, `f3dd537` — WebDAV
+VaultSource, wiring, sync-turn scheduler, activation publish) plus `cecadd1`,
+two fixes the WebDAV-mirror write path requires:
 
 - `rename_exchange` (src/vault/write/fs_ops.rs) falls back to a three-rename
   emulation when `renameat2(RENAME_EXCHANGE)` is unsupported
@@ -176,7 +185,8 @@ rclone-mounted vault requires:
   (5-6x `_Inbox`/`_Areas`/`Home` basenames) no longer abort the index build
   with `UNIQUE constraint failed: notes.slug`.
 
-Rebuild procedure:
+Rebuild procedure (source repo: `/appdata/Hatchdoor`, stack:
+`/appdata/A--docker_stacks/Hatchdoor`):
 ```
 cd /appdata/A--docker_stacks/Hatchdoor
 docker compose build && docker compose up -d --force-recreate

@@ -1,0 +1,30 @@
+# syntax=docker.io/docker/dockerfile:1.7
+
+# Test-only build: mirrors the main Dockerfile's chef/planner stages exactly
+# (so layer cache hits) but ends with `cargo test --release` instead of a
+# release binary. Used to run the Rust test suite in an environment where
+# linking works (host glibc is too old for prebuilt ort).
+
+FROM docker.io/library/rust:1.97-slim AS chef
+WORKDIR /app
+RUN apt-get update && apt-get install -y pkg-config libssl-dev g++ perl make && rm -rf /var/lib/apt/lists/*
+RUN cargo install cargo-chef --version 0.1.77 --locked
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY docs/starter-vault ./docs/starter-vault
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS rust-test
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY docs/starter-vault ./docs/starter-vault
+# Run tests as a non-root user: two tests chmod a vault dir (0o555 / 0o077)
+# and assert the runtime detects ReadOnly/Unavailable. Root bypasses file
+# permissions, so those assertions only hold for a non-root uid.
+RUN useradd --create-home tester && chown -R tester /app /usr/local/cargo
+USER tester
+RUN cargo test --release --all-targets --no-fail-fast
