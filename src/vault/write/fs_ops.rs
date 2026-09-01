@@ -800,10 +800,55 @@ fn rename_exchange(
         )
     };
     if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
+        return Ok(());
     }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        // renameat2(RENAME_EXCHANGE) is not implemented on every filesystem:
+        // fuse mounts (e.g. rclone on a network remote), NFS and some network
+        // backends answer EINVAL / ENOSYS / EOPNOTSUPP. Emulate the exchange
+        // with three plain renames so hash-guarded writes and moves keep
+        // working there:
+        //   from -> tmp, to -> from, tmp -> to
+        // Every step parks the displaced entry in a name that is currently
+        // free, so a failed step can be rolled back without losing data.
+        // The exchange is no longer atomic on these mounts (a reader can
+        // briefly see one of the two names missing), which is the accepted
+        // tradeoff for writes working at all; the post-commit hash checks in
+        // the callers still detect concurrent modification.
+        Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) => {
+            let (tmp, _tmp_file) =
+                create_unique_temporary_file(to_parent, from).map_err(io_error)?;
+            // 1. Park `from`'s file at the private temp name.
+            if let Err(step) = rename_at(from_parent, from, to_parent, &tmp) {
+                let _ = unlink_at(to_parent, &tmp);
+                return Err(io_error(step));
+            }
+            // 2. Move `to`'s file into the now-free `from` slot.
+            if let Err(step) = rename_at(to_parent, to, from_parent, from) {
+                let _ = rename_at(to_parent, &tmp, from_parent, from);
+                return Err(io_error(step));
+            }
+            // 3. Move the parked file into the now-free `to` slot.
+            if let Err(step) = rename_at(to_parent, &tmp, to_parent, to) {
+                // Roll back step 2, then step 1.
+                let _ = rename_at(from_parent, from, to_parent, to);
+                let _ = rename_at(to_parent, &tmp, from_parent, from);
+                return Err(io_error(step));
+            }
+            Ok(())
+        }
+        _ => Err(error),
+    }
+}
+
+fn io_error(write_error: WriteError) -> std::io::Error {
+    let message = match write_error {
+        WriteError::Conflict(message)
+        | WriteError::InvalidInput(message)
+        | WriteError::Io(message) => message,
+    };
+    std::io::Error::new(std::io::ErrorKind::Other, message)
 }
 
 #[cfg(test)]

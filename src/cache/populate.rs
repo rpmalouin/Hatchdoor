@@ -1280,6 +1280,27 @@ fn upsert_note_content(
         )
     })?;
 
+    // Stale-slug guard: the upsert below keys on relative_path only, but the
+    // global `notes` table also enforces UNIQUE(slug). When a note is moved
+    // or renamed (or two index passes race over a basename-derived slug
+    // family — this vault has parallel trees whose _Inbox/_Areas/Home files
+    // collide), the slug this note derives can already be owned by a row at
+    // a DIFFERENT relative_path, and the plain INSERT would abort the entire
+    // index build with "UNIQUE constraint failed: notes.slug". Drop any row
+    // that owns our slug at another path first: it is a leftover of a
+    // replaced file, and the notes table is always rebuilt from disk anyway,
+    // so even a still-live row is recoverable on the next pass.
+    tx.execute(
+        "DELETE FROM notes WHERE slug = ?1 AND relative_path != ?2",
+        params![&entry.slug, &entry.relative_path],
+    )
+    .map_err(|error| {
+        format!(
+            "failed clearing stale slug row for '{}': {error}",
+            entry.slug
+        )
+    })?;
+
     tx.execute(
         r#"
         INSERT INTO notes(
