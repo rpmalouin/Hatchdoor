@@ -67,6 +67,11 @@ was stored but never consumed. This commit adds the missing Phase D:
   (disabled/disconnected/retired/source changed).
 - **`src/app_state.rs`**: `AppState.webdav` field (test and handler wiring).
 - **`src/vault_registry.rs`**: `VaultSource::webdav_poll_interval()` accessor.
+- **`src/vault_runtime.rs`**: after a successful WebDAV sync, the dispatch
+  re-publishes local-content availability (`publish_local_content_after_sync`,
+  the same stat + `set_local_content_status` the managed-Git success path
+  uses), so the live snapshot flips to `activation: Active` (browse + mutate)
+  the moment the mirror exists — no reconcile or restart required.
 
 Verified: `cargo check` and `cargo check --tests` clean; module-map gate passes;
 deployed live — a WebDAV-sourced vault self-heals from missing-mirror to

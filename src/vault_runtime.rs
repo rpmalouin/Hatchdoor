@@ -2326,7 +2326,7 @@ fn publish_managed_git_turn_outcome(
     match result {
         Ok(_) => {
             let _ = control_block.set_git_status(VaultGitStatus::Ready, None);
-            publish_local_content_after_git_success(control_block);
+            publish_local_content_after_sync(control_block);
             if control_block.is_accepting_operations()
                 && matches!(
                     control_block.snapshot().local_content,
@@ -2351,11 +2351,12 @@ fn publish_managed_git_turn_outcome(
     managed_git.record_outcome(vault_id, result);
 }
 
-/// Re-derive and publish local-content availability after a successful Git
-/// turn, using the same directory check `activation_snapshot` uses at
-/// `reconcile()` time (via [`stat_local_content`]). A managed Vault's
-/// checkout may not have existed the last time that ran.
-fn publish_local_content_after_git_success(control_block: &VaultControlBlock) {
+/// Re-derive and publish local-content availability after a successful sync
+/// turn (managed Git or WebDAV), using the same directory check
+/// `activation_snapshot` uses at `reconcile()` time (via [`stat_local_content`]).
+/// A managed Vault's checkout / mirror may not have existed the last time that
+/// ran.
+fn publish_local_content_after_sync(control_block: &VaultControlBlock) {
     let (status, error) = stat_local_content(control_block.vault_path());
     let _ = control_block.set_local_content_status(status, error);
 }
@@ -2449,6 +2450,11 @@ pub async fn dispatch_webdav_turn(
     match result {
         Ok(()) => {
             drop(mutation_guard);
+            // The sync created/filled the mirror; re-derive local-content
+            // availability so the live snapshot flips to Active (browse +
+            // mutate) without waiting for the next reconcile — mirrors the
+            // managed-Git success path.
+            publish_local_content_after_sync(&control_block);
             // Refresh the read model so the vault reflects the new mirror.
             coordinator.request(vault_id, VaultWorkKind::Index);
             Ok(())
