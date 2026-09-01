@@ -529,6 +529,7 @@ async fn reconcile_after_commit(
     let registry = state.vault_registry.clone();
     let vault_work = state.vault_work.clone();
     let managed_git = state.managed_git.clone();
+    let webdav = state.webdav.clone();
     let snapshot = snapshot.clone();
     let (mutation_boundary, mutation_safe) = tokio::sync::oneshot::channel();
     let _reconciled = tokio::spawn(async move {
@@ -538,6 +539,7 @@ async fn reconcile_after_commit(
                 &snapshot,
                 &vault_work,
                 &managed_git,
+                &webdav,
                 mutation_boundary,
             )
             .await;
@@ -1185,8 +1187,9 @@ mod tests {
                 directory.path().join("state/vaults.json"),
             ),
             vaults: crate::vault_runtime::VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: std::sync::Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: std::sync::Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: std::sync::Arc::new(
                 SqliteCache::in_memory(384).expect("in-memory cache"),

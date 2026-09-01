@@ -4,6 +4,7 @@ use tempfile::tempdir;
 use crate::cache::SqliteCache;
 use crate::cache::vault_snapshots::{VaultSnapshotFreshness, VaultSnapshotStatus};
 use crate::embed::{Embedder, StubEmbedder};
+use crate::vault::remote::WebDavScheduler;
 use crate::search::vault_scoped::{VaultSearchCore, VaultSearchRequest};
 use crate::search::{LayerSelection, NoteFilters, SearchMode};
 use crate::vault_read::VaultScope;
@@ -307,8 +308,9 @@ async fn index_turn_publishes_one_vault_and_a_failure_keeps_its_snapshot_stale()
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git, &webdav)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let working: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -463,8 +465,9 @@ async fn index_turn_defers_while_the_embedding_model_is_still_being_set_up() {
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &webdav)
         .await;
 
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
@@ -535,8 +538,9 @@ async fn index_turn_with_embed_layers_disabled_keeps_demoted_notes_keyword_only(
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &webdav)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -625,8 +629,9 @@ async fn index_turn_waits_for_a_multifile_foreground_mutation_before_publishing(
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &webdav)
         .await;
     let control = collection.runtime(vault_id).expect("active Vault runtime");
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
@@ -744,8 +749,9 @@ async fn active_index_turn_reports_the_retained_snapshot_stale_to_concurrent_rea
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &webdav)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let working: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -2341,15 +2347,16 @@ async fn lifecycle_retirement_updates_only_the_target_published_snapshot() {
     );
     let (coordinator, _worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &two, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &two, &coordinator, &managed_git, &webdav)
         .await;
 
     let disabled = registry
         .disable(two.revision(), first_id)
         .expect("disable first Vault");
     collection
-        .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav)
         .await;
     assert_eq!(
         cache.snapshot_status(first_id).expect("first status"),
@@ -2371,7 +2378,7 @@ async fn lifecycle_retirement_updates_only_the_target_published_snapshot() {
         .enable(disabled.revision(), first_id)
         .expect("enable first Vault");
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
         .await;
     assert!(
         !cache
@@ -2386,7 +2393,7 @@ async fn lifecycle_retirement_updates_only_the_target_published_snapshot() {
         .disconnect(enabled.revision(), first_id)
         .expect("disconnect first Vault");
     collection
-        .reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git, &webdav)
         .await;
     assert_eq!(cache.snapshot_status(first_id).expect("first status"), None);
     assert_eq!(
@@ -2438,8 +2445,9 @@ async fn disabling_a_vault_waits_for_an_active_foreground_mutation_safe_boundary
     let collection = VaultCollectionRuntime::new();
     let (coordinator, _) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
         .await;
     let runtime = collection.runtime(vault_id).expect("enabled runtime");
     let mutation = runtime
@@ -2451,7 +2459,7 @@ async fn disabling_a_vault_waits_for_an_active_foreground_mutation_safe_boundary
         .expect("disable Vault");
 
     let reconciliation =
-        collection.reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git);
+        collection.reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav);
     tokio::pin!(reconciliation);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(25), &mut reconciliation)
@@ -2520,8 +2528,9 @@ async fn an_older_reconciliation_cannot_readmit_work_after_a_newer_snapshot_appl
     let collection = VaultCollectionRuntime::new();
     let (coordinator, _) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
         .await;
     let original = collection.runtime(vault_id).expect("enabled runtime");
     let mutation = original
@@ -2544,7 +2553,7 @@ async fn an_older_reconciliation_cannot_readmit_work_after_a_newer_snapshot_appl
         )
         .expect("replace enabled Vault definition");
     let older =
-        collection.reconcile_and_reconstruct(&registry, &replacement, &coordinator, &managed_git);
+        collection.reconcile_and_reconstruct(&registry, &replacement, &coordinator, &managed_git, &webdav);
     tokio::pin!(older);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(25), &mut older)
@@ -2556,7 +2565,7 @@ async fn an_older_reconciliation_cannot_readmit_work_after_a_newer_snapshot_appl
         .disable(replacement.revision(), vault_id)
         .expect("disable replacement Vault");
     collection
-        .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav)
         .await;
 
     drop(mutation);
@@ -2594,9 +2603,10 @@ async fn restart_reconstructs_index_work_for_each_enabled_vault_from_the_collect
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
 
     collection
-        .reconcile_and_reconstruct(&registry, &two, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &two, &coordinator, &managed_git, &webdav)
         .await;
 
     let mut reconstructed = Vec::new();
@@ -2661,8 +2671,9 @@ async fn restart_reports_retained_cache_freshness_while_reconstructing_index_wor
     );
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &three, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &three, &coordinator, &managed_git, &webdav)
         .await;
 
     let runtime = collection.snapshot();
@@ -2727,8 +2738,9 @@ async fn restart_reconstructs_a_structure_only_snapshot_as_browsable_not_ready()
     );
     let (coordinator, _worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &added, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &added, &coordinator, &managed_git, &webdav)
         .await;
 
     let runtime = collection.snapshot();
@@ -2785,8 +2797,9 @@ async fn a_vectorless_generation_never_advertises_search_even_when_stale() {
     );
     let (coordinator, _worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &added, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &added, &coordinator, &managed_git, &webdav)
         .await;
 
     let runtime = collection.snapshot();
@@ -2821,8 +2834,9 @@ async fn disabling_a_vault_waits_for_its_active_work_safe_boundary() {
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
         .await;
 
     let started = Arc::new(tokio::sync::Notify::new());
@@ -2851,7 +2865,7 @@ async fn disabling_a_vault_waits_for_its_active_work_safe_boundary() {
         .disable(enabled.revision(), vault_id)
         .expect("disable Vault");
     let reconciliation =
-        collection.reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git);
+        collection.reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav);
     tokio::pin!(reconciliation);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(25), &mut reconciliation)
@@ -2910,8 +2924,9 @@ async fn disabling_after_an_admitted_index_retires_its_late_publication() {
     );
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = Arc::new(ManagedGitScheduler::new(coordinator.clone()));
+    let webdav = Arc::new(WebDavScheduler::new(coordinator.clone()));
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git, &webdav)
         .await;
     // Drain reconstruction requests; snapshots above are the retained baseline.
     for _ in [first, second] {
@@ -2981,10 +2996,11 @@ async fn disabling_after_an_admitted_index_retires_its_late_publication() {
         let registry = registry.clone();
         let coordinator = coordinator.clone();
         let managed_git = managed_git.clone();
+        let webdav = webdav.clone();
         let disabled = disabled.clone();
         async move {
             collection
-                .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git)
+                .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav)
                 .await;
         }
     });
@@ -3001,9 +3017,10 @@ async fn disabling_after_an_admitted_index_retires_its_late_publication() {
         let registry = registry.clone();
         let coordinator = coordinator.clone();
         let managed_git = managed_git.clone();
+        let webdav = webdav.clone();
         async move {
             collection
-                .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+                .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
                 .await;
         }
     });
@@ -3069,8 +3086,9 @@ async fn reenable_waits_until_disable_finishes_cache_retirement() {
     );
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = Arc::new(ManagedGitScheduler::new(coordinator.clone()));
+    let webdav = Arc::new(WebDavScheduler::new(coordinator.clone()));
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
         .await;
     worker
         .run_next(|_| async { Ok::<(), VaultWorkError>(()) })
@@ -3095,10 +3113,11 @@ async fn reenable_waits_until_disable_finishes_cache_retirement() {
         let registry = registry.clone();
         let coordinator = coordinator.clone();
         let managed_git = managed_git.clone();
+        let webdav = webdav.clone();
         let disabled = disabled.clone();
         async move {
             collection
-                .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git)
+                .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav)
                 .await;
         }
     });
@@ -3118,9 +3137,10 @@ async fn reenable_waits_until_disable_finishes_cache_retirement() {
         let registry = registry.clone();
         let coordinator = coordinator.clone();
         let managed_git = managed_git.clone();
+        let webdav = webdav.clone();
         async move {
             collection
-                .reconcile_and_reconstruct(&registry, &reenabled, &coordinator, &managed_git)
+                .reconcile_and_reconstruct(&registry, &reenabled, &coordinator, &managed_git, &webdav)
                 .await;
         }
     });
@@ -3194,8 +3214,9 @@ async fn disconnecting_after_an_admitted_index_deletes_its_late_publication() {
     );
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git, &webdav)
         .await;
     for _ in [first, second] {
         worker
@@ -3231,7 +3252,7 @@ async fn disconnecting_after_an_admitted_index_deletes_its_late_publication() {
         .disconnect(both.revision(), first)
         .expect("disconnect");
     let reconcile =
-        collection.reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git);
+        collection.reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git, &webdav);
     tokio::pin!(reconcile);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(25), &mut reconcile)
@@ -3292,12 +3313,13 @@ async fn disconnecting_a_disabled_vault_deletes_its_retained_snapshot() {
     );
     let (coordinator, _worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git, &webdav)
         .await;
     let disabled = registry.disable(both.revision(), first).expect("disable");
     collection
-        .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &disabled, &coordinator, &managed_git, &webdav)
         .await;
     assert!(
         !cache
@@ -3310,7 +3332,7 @@ async fn disconnecting_a_disabled_vault_deletes_its_retained_snapshot() {
         .disconnect(disabled.revision(), first)
         .expect("disconnect");
     collection
-        .reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git, &webdav)
         .await;
     assert_eq!(cache.snapshot_status(first).expect("status"), None);
     assert_eq!(cache.snapshot_note_count(first).expect("rows"), 0);
@@ -3358,8 +3380,9 @@ async fn restart_retries_a_failed_disconnect_retirement() {
     );
     let (coordinator, _worker) = VaultWorkCoordinator::new();
     let managed = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed, &webdav)
         .await;
     cache.connection().expect("conn").execute_batch(&format!("CREATE TRIGGER fail_disconnect BEFORE DELETE ON vault_snapshots WHEN OLD.vault_id = '{}' BEGIN SELECT RAISE(ABORT, 'disconnect failed'); END;", first)).expect("trigger");
     let disconnected = registry
@@ -3372,6 +3395,7 @@ async fn restart_retries_a_failed_disconnect_retirement() {
             &disconnected,
             &coordinator,
             &managed,
+            &webdav,
             sender,
         )
         .await;
@@ -3387,8 +3411,9 @@ async fn restart_retries_a_failed_disconnect_retirement() {
     );
     let (restart_work, _worker) = VaultWorkCoordinator::new();
     let restart_managed = ManagedGitScheduler::new(restart_work.clone());
+    let restart_webdav = WebDavScheduler::new(restart_work.clone());
     restarted
-        .reconcile_and_reconstruct(&registry, &disconnected, &restart_work, &restart_managed)
+        .reconcile_and_reconstruct(&registry, &disconnected, &restart_work, &restart_managed, &restart_webdav)
         .await;
     assert_eq!(cache.snapshot_status(first).expect("status"), None);
     assert_eq!(cache.snapshot_note_count(first).expect("rows"), 0);
@@ -3436,8 +3461,9 @@ async fn disable_reports_a_target_scoped_snapshot_retirement_failure() {
     );
     let (coordinator, _worker) = VaultWorkCoordinator::new();
     let managed = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed, &webdav)
         .await;
     cache.connection().expect("conn").execute_batch(&format!("CREATE TRIGGER fail_disable BEFORE UPDATE OF participating ON vault_snapshots WHEN OLD.vault_id = '{}' BEGIN SELECT RAISE(ABORT, 'injected retirement failure'); END;", first)).expect("trigger");
     let disabled = registry
@@ -3450,6 +3476,7 @@ async fn disable_reports_a_target_scoped_snapshot_retirement_failure() {
             &disabled,
             &coordinator,
             &managed,
+            &webdav,
             sender,
         )
         .await;
@@ -3474,6 +3501,7 @@ async fn disable_reports_a_target_scoped_snapshot_retirement_failure() {
             &disabled,
             &coordinator,
             &managed,
+            &webdav,
             retry_sender,
         )
         .await;
@@ -3489,7 +3517,7 @@ async fn disable_reports_a_target_scoped_snapshot_retirement_failure() {
         .enable(disabled.revision(), first)
         .expect("enable committed");
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed, &webdav)
         .await;
     assert!(
         !cache
@@ -3520,8 +3548,9 @@ async fn replacing_an_enabled_vault_waits_for_old_work_then_reconstructs_new_wor
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &enabled, &coordinator, &managed_git, &webdav)
         .await;
 
     let started = Arc::new(tokio::sync::Notify::new());
@@ -3563,7 +3592,7 @@ async fn replacing_an_enabled_vault_waits_for_old_work_then_reconstructs_new_wor
         )
         .expect("replace enabled Vault definition");
     let reconciliation =
-        collection.reconcile_and_reconstruct(&registry, &replacement, &coordinator, &managed_git);
+        collection.reconcile_and_reconstruct(&registry, &replacement, &coordinator, &managed_git, &webdav);
     tokio::pin!(reconciliation);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(25), &mut reconciliation)
@@ -3612,15 +3641,16 @@ async fn disconnecting_a_vault_discards_its_work_without_delaying_another_vault(
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git, &webdav)
         .await;
 
     let disconnected = registry
         .disconnect(both.revision(), target_id)
         .expect("disconnect target Vault");
     collection
-        .reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &disconnected, &coordinator, &managed_git, &webdav)
         .await;
 
     assert!(collection.runtime(target_id).is_none());
@@ -3655,8 +3685,9 @@ async fn graceful_shutdown_revokes_vaults_and_discards_reconstructible_work() {
     let collection = VaultCollectionRuntime::new();
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::new(coordinator.clone());
+    let webdav = WebDavScheduler::new(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &webdav)
         .await;
     let runtime = collection.runtime(vault_id).expect("active runtime");
     let started = Arc::new(tokio::sync::Notify::new());

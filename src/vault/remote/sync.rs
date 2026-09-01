@@ -12,9 +12,9 @@
 //! It mirrors Hatchdoor's `ManagedGit` execution model: run as a background
 //! `VaultWorkKind` turn under the Vault's mutation lock, with the mirror being
 //! what the index/watcher/write layer already operate on. Phase D of the WebDAV
-//! work packet; it never serves a per-request note read directly.
-
-#![allow(dead_code)] // wired into dispatch by the follow-up adding the WebDAV work kind.
+//! work packet; it never serves a per-request note read directly. The turn is
+//! triggered and scheduled by [`webdav_scheduler`] (initial sync due on
+//! activation, then every `poll_interval_secs`).
 
 use std::path::Path;
 

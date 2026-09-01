@@ -48,6 +48,9 @@ use crate::runtime_config::{
     ConfigSnapshot, RuntimeConfig, live_settings_defaults, settings_file_path,
 };
 use crate::startup::StartupTracker;
+use crate::vault::remote::{
+    WEBDAV_TICK_INTERVAL, WebDavScheduler, spawn_webdav_tick,
+};
 use crate::vault_migration::{LegacyMigrationInput, LegacyMigrationOutcome, migrate_legacy_vault};
 use crate::vault_registry::{VaultRegistryState, VaultRegistryStore};
 use crate::vault_runtime::{
@@ -71,6 +74,7 @@ struct VaultWorkDispatchContext {
     registry: VaultRegistryStore,
     work: VaultWorkCoordinator,
     managed_git: Arc<crate::git::ManagedGitScheduler>,
+    webdav: Arc<WebDavScheduler>,
     cache: Arc<SqliteCache>,
     embedder: Arc<dyn Embedder>,
     runtime_snapshot: Arc<ConfigSnapshot>,
@@ -114,13 +118,16 @@ impl VaultWorkDispatchContext {
                 .await
             }
             VaultWorkKind::WebDav => {
-                dispatch_webdav_turn(
-                    &self.vaults,
-                    &self.registry,
-                    &self.work,
-                    request,
-                )
-                .await
+                let result =
+                    dispatch_webdav_turn(&self.vaults, &self.registry, &self.work, request)
+                        .await;
+                // Re-arm the WebDAV sync schedule from the turn's outcome:
+                // poll interval after success, bounded backoff after failure.
+                // A stray request for a Vault the scheduler no longer tracks
+                // is a harmless no-op inside `record_outcome`.
+                self.webdav
+                    .record_outcome(request.vault_id(), result.is_ok());
+                result
             }
             VaultWorkKind::Repair => Err(VaultWorkError::new(
                 "vault_work_kind_not_yet_implemented",
@@ -1147,6 +1154,7 @@ pub async fn run_server() {
     // worker loop below is the one global dispatcher for all admitted turns.
     let (vault_work, vault_worker) = VaultWorkCoordinator::new();
     let managed_git = Arc::new(crate::git::ManagedGitScheduler::new(vault_work.clone()));
+    let webdav = Arc::new(WebDavScheduler::new(vault_work.clone()));
     let git_author_name =
         crate::git::config::non_empty_setting(&startup_snapshot, "HATCHDOOR_GIT_AUTHOR_NAME")
             .unwrap_or_else(|| "Hatchdoor".to_string());
@@ -1160,7 +1168,7 @@ pub async fn run_server() {
         ),
         (VaultRegistryState::Ready(snapshot), None) => {
             vaults
-                .reconcile_and_reconstruct(&vault_registry, snapshot, &vault_work, &managed_git)
+                .reconcile_and_reconstruct(&vault_registry, snapshot, &vault_work, &managed_git, &webdav)
                 .await
         }
         (VaultRegistryState::Recovery(recovery), None) => warn!(
@@ -1187,6 +1195,7 @@ pub async fn run_server() {
         vaults,
         vault_work: vault_work.clone(),
         managed_git: managed_git.clone(),
+        webdav: webdav.clone(),
         legacy_migration_recovery: Arc::new(std::sync::RwLock::new(legacy_migration_recovery)),
         startup_sqlite: sqlite.clone(),
         ready_vault: Arc::new(RwLock::new(None)),
@@ -1236,6 +1245,7 @@ pub async fn run_server() {
         let dispatch_registry = state.vault_registry.clone();
         let dispatch_work = vault_work.clone();
         let dispatch_managed_git = managed_git.clone();
+        let dispatch_webdav = webdav.clone();
         let dispatch_cache = state.startup_sqlite.clone();
         let dispatch_embedder = state.embedder.clone();
         let dispatch_runtime_config = state.runtime_config.clone();
@@ -1248,6 +1258,7 @@ pub async fn run_server() {
                     let registry = dispatch_registry.clone();
                     let work = dispatch_work.clone();
                     let managed_git = dispatch_managed_git.clone();
+                    let webdav = dispatch_webdav.clone();
                     let cache = dispatch_cache.clone();
                     let embedder = dispatch_embedder.clone();
                     let runtime_snapshot = dispatch_runtime_config.snapshot();
@@ -1259,6 +1270,7 @@ pub async fn run_server() {
                         registry,
                         work,
                         managed_git,
+                        webdav,
                         cache,
                         embedder,
                         runtime_snapshot,
@@ -1317,7 +1329,7 @@ pub async fn run_server() {
     });
     let scheduler_tick_task =
         crate::git::spawn_scheduler_tick(managed_git.clone(), crate::git::DEFAULT_TICK_INTERVAL);
-
+    let webdav_tick_task = spawn_webdav_tick(webdav.clone(), WEBDAV_TICK_INTERVAL);
     let addr = config.socket_addr().unwrap_or_else(|e| {
         error!("Address error: {e}");
         std::process::exit(1);
@@ -1363,6 +1375,7 @@ pub async fn run_server() {
     // coordinator has stopped accepting work; the dispatch loop drains and
     // exits on its own now that `shutdown()` above reached quiescence.
     scheduler_tick_task.abort();
+    webdav_tick_task.abort();
     if let Some(task) = watcher_index_task {
         task.abort();
     }
@@ -1823,8 +1836,9 @@ mod tests {
             cache_db_path: tmp.path().join("cache.sqlite3"),
             vault_registry: VaultRegistryStore::new(tmp.path().join("state/vaults.json")),
             vaults: VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: cache.sqlite.clone(),
             ready_vault: Arc::new(RwLock::new(Some(ReadyVault {
@@ -1893,8 +1907,9 @@ mod tests {
         let vaults = VaultCollectionRuntime::new();
         let (work, mut worker) = VaultWorkCoordinator::new();
         let managed_git = Arc::new(crate::git::ManagedGitScheduler::new(work.clone()));
+        let webdav = Arc::new(WebDavScheduler::new(work.clone()));
         vaults
-            .reconcile_and_reconstruct(&registry, &snapshot, &work, &managed_git)
+            .reconcile_and_reconstruct(&registry, &snapshot, &work, &managed_git, &webdav)
             .await;
         let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
         let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -1920,6 +1935,7 @@ mod tests {
                         registry,
                         work,
                         managed_git,
+                        webdav: webdav.clone(),
                         cache,
                         embedder,
                         runtime_snapshot: captured,
@@ -2015,8 +2031,9 @@ mod tests {
             cache_db_path: tmp.path().join("cache.sqlite3"),
             vault_registry: VaultRegistryStore::new(tmp.path().join("state/vaults.json")),
             vaults: VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: cache.sqlite.clone(),
             ready_vault: Arc::new(RwLock::new(Some(ReadyVault {
@@ -4716,7 +4733,7 @@ mod tests {
                 &state.vault_registry,
                 &snapshot,
                 &state.vault_work,
-                &state.managed_git,
+                &state.managed_git, &state.webdav,
             )
             .await;
         let vault_id = snapshot.vault_ids().next().expect("one vault id");
@@ -4824,7 +4841,7 @@ mod tests {
                     &state.vault_registry,
                     &snapshot,
                     &state.vault_work,
-                    &state.managed_git,
+                    &state.managed_git, &state.webdav,
                 )
                 .await;
         }
@@ -5162,7 +5179,7 @@ mod tests {
                 &state.vault_registry,
                 &snapshot,
                 &state.vault_work,
-                &state.managed_git,
+                &state.managed_git, &state.webdav,
             )
             .await;
         let vault_id = snapshot.vault_ids().next().expect("one vault id");
@@ -5730,7 +5747,7 @@ mod tests {
                 &state.vault_registry,
                 &unavailable_snapshot,
                 &state.vault_work,
-                &state.managed_git,
+                &state.managed_git, &state.webdav,
             )
             .await;
         let unavailable_id = unavailable_snapshot.vault_ids().next().expect("vault id");
@@ -5776,7 +5793,7 @@ mod tests {
                 &state.vault_registry,
                 &disabled_snapshot,
                 &state.vault_work,
-                &state.managed_git,
+                &state.managed_git, &state.webdav,
             )
             .await;
         let disabled = app
@@ -5819,7 +5836,7 @@ mod tests {
                 &state.vault_registry,
                 &available_snapshot,
                 &state.vault_work,
-                &state.managed_git,
+                &state.managed_git, &state.webdav,
             )
             .await;
         let available_id = available_snapshot
@@ -6223,7 +6240,7 @@ mod tests {
                         &state.vault_registry,
                         &snapshot,
                         &state.vault_work,
-                        &state.managed_git,
+                        &state.managed_git, &state.webdav,
                     )
                     .await;
             }

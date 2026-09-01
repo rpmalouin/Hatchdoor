@@ -32,6 +32,10 @@ pub struct AppState {
     /// commit; manual sync/retry request a Git turn directly.
     pub vault_work: crate::vault_work::VaultWorkCoordinator,
     pub managed_git: Arc<crate::git::ManagedGitScheduler>,
+    /// Per-Vault WebDAV sync-turn scheduler (the WebDAV equivalent of
+    /// `managed_git`, kept deliberately separate: WebDAV is NOT git and never
+    /// routes through the Git scheduler or the git sync/retry handlers).
+    pub webdav: Arc<crate::vault::remote::WebDavScheduler>,
     /// Present when safe automatic import could not prove the legacy
     /// deployment. Collection/setup surfaces remain available for recovery.
     /// Cleared by a confirmed "Start with no Vaults"
@@ -774,8 +778,9 @@ mod tests {
             cache_db_path: state_root.join("cache.sqlite3"),
             vault_registry: VaultRegistryStore::new(state_root.join("state/vaults.json")),
             vaults: VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(StdRwLock::new(None)),
             startup_sqlite: cache.sqlite.clone(),
             ready_vault: Arc::new(RwLock::new(Some(ReadyVault { vault_path, cache }))),

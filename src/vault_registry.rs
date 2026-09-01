@@ -298,6 +298,22 @@ impl VaultSource {
             | Self::WebDav { .. } => None,
         }
     }
+
+    /// The WebDAV sync poll interval, for `WebDav` sources only. Unlike
+    /// [`Self::managed_git_poll_interval`] this is NOT git: it drives the
+    /// WebDAV sync-turn scheduler (`vault::remote::webdav_scheduler`), which
+    /// must never route through `ManagedGitScheduler` or the git handlers.
+    pub fn webdav_poll_interval(&self) -> Option<Duration> {
+        match self {
+            Self::WebDav {
+                poll_interval_secs,
+                ..
+            } => Some(Duration::from_secs(*poll_interval_secs)),
+            Self::Local { .. }
+            | Self::ExistingGit { .. }
+            | Self::ManagedGit { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

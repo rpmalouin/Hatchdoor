@@ -242,8 +242,9 @@ mod tests {
                 tmp.path().join("state/vaults.json"),
             ),
             vaults: crate::vault_runtime::VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: cache.sqlite.clone(),
             ready_vault: Arc::new(RwLock::new(Some(ReadyVault {
@@ -289,8 +290,9 @@ mod tests {
                 tmp.path().join("state/vaults.json"),
             ),
             vaults: crate::vault_runtime::VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: Arc::new(
                 crate::cache::SqliteCache::in_memory(384).expect("in-memory cache"),
@@ -355,8 +357,9 @@ mod tests {
                 tmp.path().join("state/vaults.json"),
             ),
             vaults: crate::vault_runtime::VaultCollectionRuntime::new(),
-            vault_work,
+            vault_work: vault_work.clone(),
             managed_git,
+            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: cache.sqlite.clone(),
             ready_vault: Arc::new(RwLock::new(Some(ReadyVault {

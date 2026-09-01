@@ -1086,12 +1086,14 @@ impl VaultCollectionRuntime {
         snapshot: &VaultRegistrySnapshot,
         coordinator: &VaultWorkCoordinator,
         managed_git: &ManagedGitScheduler,
+        webdav: &crate::vault::remote::WebDavScheduler,
     ) {
         self.reconcile_and_reconstruct_with_mutation_boundary(
             registry,
             snapshot,
             coordinator,
             managed_git,
+            webdav,
             None,
         )
         .await;
@@ -1103,6 +1105,7 @@ impl VaultCollectionRuntime {
         snapshot: &VaultRegistrySnapshot,
         coordinator: &VaultWorkCoordinator,
         managed_git: &ManagedGitScheduler,
+        webdav: &crate::vault::remote::WebDavScheduler,
         mutation_boundary: tokio::sync::oneshot::Sender<Result<(), String>>,
     ) {
         self.reconcile_and_reconstruct_with_mutation_boundary(
@@ -1110,6 +1113,7 @@ impl VaultCollectionRuntime {
             snapshot,
             coordinator,
             managed_git,
+            webdav,
             Some(mutation_boundary),
         )
         .await;
@@ -1121,6 +1125,7 @@ impl VaultCollectionRuntime {
         snapshot: &VaultRegistrySnapshot,
         coordinator: &VaultWorkCoordinator,
         managed_git: &ManagedGitScheduler,
+        webdav: &crate::vault::remote::WebDavScheduler,
         mutation_boundary: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
     ) {
         let phase_guard = self.reconcile_phase_lock.lock().await;
@@ -1196,6 +1201,18 @@ impl VaultCollectionRuntime {
             });
             if !still_active_managed_git {
                 managed_git.deactivate(*vault_id);
+            }
+            // WebDAV sources are tracked by their own sync-turn scheduler,
+            // retired by the same disable/disconnect/identity-change rule.
+            let still_active_webdav = active.get(vault_id).is_some_and(|runtime| {
+                runtime
+                    .definition()
+                    .source()
+                    .webdav_poll_interval()
+                    .is_some()
+            });
+            if !still_active_webdav {
+                webdav.deactivate(*vault_id);
             }
         }
         drop(phase_guard);
@@ -1352,6 +1369,14 @@ impl VaultCollectionRuntime {
             // request a Git turn — only a `Pending` status does that, below.
             if let Some(poll_interval) = runtime.definition().source().managed_git_poll_interval() {
                 managed_git.activate(*vault_id, poll_interval);
+            }
+            // WebDAV sources get their own sync-turn scheduler: register it
+            // so the first turn fires immediately (creating the mirror) and
+            // the poll interval re-arms subsequent syncs. Activated for every
+            // (re)activated WebDAV definition, independent of activation
+            // status: a mirror that does not exist yet must still be synced.
+            if let Some(poll_interval) = runtime.definition().source().webdav_poll_interval() {
+                webdav.activate(*vault_id, poll_interval);
             }
             if snapshot.git == VaultGitStatus::Pending {
                 coordinator.request(*vault_id, VaultWorkKind::Git);

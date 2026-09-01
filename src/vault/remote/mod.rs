@@ -20,6 +20,9 @@
 use std::time::Duration;
 
 pub(crate) mod sync;
+pub(crate) mod webdav_scheduler;
+
+pub(crate) use webdav_scheduler::{WEBDAV_TICK_INTERVAL, WebDavScheduler, spawn_webdav_tick};
 
 /// Credentials for a WebDAV endpoint. Kept out of debug output and projections.
 #[derive(Clone)]

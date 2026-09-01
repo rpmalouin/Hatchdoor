@@ -14,6 +14,7 @@ delta is listed below; everything else tracks upstream unchanged.
 | `04fee5e` | `chore(deps)`: patch Rust and frontend dependency security advisories |
 | `02dd552` | `feat(webdav)`: add a WebDAV `VaultSource` backend, client, and sync engine |
 | `5443413` | `feat(webdav)`: wire WebDAV into the work scheduler, server dispatch, and settings UI |
+| `e98863f` | `fix(webdav)`: WebDAV sync-turn scheduler — the missing Phase D trigger (see below) |
 
 ### Details of the security commit (`04fee5e`)
 
@@ -42,6 +43,34 @@ and the server, and the settings UI (a "WebDAV endpoint" Add-a-Vault option and
 an edit-flow mapping). WebDAV is treated deliberately as NOT Git (no git turn)
 and reads are served from the local mirror, never the disposable cache, in line
 with `ADR-01`.
+
+### Details of the WebDAV scheduler commit
+
+The original WebDAV feature shipped the sync engine and the dispatch arm but no
+**trigger**: nothing ever queued `VaultWorkKind::WebDav`, so a WebDAV vault
+whose mirror did not exist yet sat in `activation: unavailable` forever — the
+sync turn that creates the mirror was never requested, and `poll_interval_secs`
+was stored but never consumed. This commit adds the missing Phase D:
+
+- **`src/vault/remote/webdav_scheduler.rs`** (new): a `WebDavScheduler` mirroring
+  `ManagedGitScheduler` — per-vault entries armed *due immediately* on
+  activation (first turn creates the mirror), a 15s tick loop firing
+  `VaultWorkKind::WebDav` requests when due (skipping vaults with an admitted
+  WebDAV turn), and `record_outcome` re-arming to `poll_interval_secs` on
+  success or bounded backoff (30s→60s) on failure.
+- **`src/server.rs`**: the scheduler is created beside `managed_git`, cloned
+  into the dispatch context (the WebDAV dispatch arm now reports turn outcome),
+  threaded through `reconcile_and_reconstruct`, and its tick task is spawned
+  and aborted with the git scheduler's.
+- **`src/vault_runtime.rs`**: activation calls `webdav.activate(vault_id, poll_interval)`
+  for WebDAV-sourced vaults and `deactivate` when a vault leaves that state
+  (disabled/disconnected/retired/source changed).
+- **`src/app_state.rs`**: `AppState.webdav` field (test and handler wiring).
+- **`src/vault_registry.rs`**: `VaultSource::webdav_poll_interval()` accessor.
+
+Verified: `cargo check` and `cargo check --tests` clean; module-map gate passes;
+deployed live — a WebDAV-sourced vault self-heals from missing-mirror to
+indexed-and-browsable without any manual API call.
 
 ## Syncing with upstream
 
