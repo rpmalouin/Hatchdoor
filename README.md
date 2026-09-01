@@ -21,6 +21,12 @@
 > commit and native WebDAV vault support (see [`FORK.md`](FORK.md)). Both the
 > code and the `battermanz/hatchdoor` Docker image are otherwise unchanged.
 
+> **Hermes integration:** this fork ships with a complete, verified playbook for
+> wiring Hatchdoor's MCP server into [Hermes Agent](https://hermes-agent.nousresearch.com) —
+> registration and token sync, the real 35-tool surface, operation templates,
+> hatchdoor-only access enforcement, a vault-only role agent, and drift
+> detection. See [`HERMES.md`](HERMES.md).
+
 Hatchdoor is a self-hosted, **agent-native** web app for your Obsidian-style
 Markdown vault. Browse, search, and edit your notes in a fast web UI, and give
 AI agents first-class access to the very same vault over the Model Context
