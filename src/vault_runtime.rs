@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, Weak};
 
 use serde::Serialize;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::cache::SqliteCache;
 use crate::cache::vault_snapshots::VaultSnapshotFreshness;
@@ -2366,8 +2366,9 @@ fn publish_local_content_after_sync(control_block: &VaultControlBlock) {
 /// A WebDAV-sourced Vault is one that carries `VaultSource::WebDav`. Its
 /// "authoritative read path" is a local mirror checkout (see
 /// `VaultRegistryStore::vault_path`); this turn reconciles that mirror with
-/// the remote WebDAV collection (pull remote content, push new local notes)
-/// under the Vault's mutation lock, then requests an Index turn so the SQLite
+/// the remote WebDAV collection (refresh remote edits, propagate remote
+/// deletions, push only Hatchdoor-created local files) under the Vault's
+/// mutation lock, then requests an Index turn so the SQLite
 /// read model rebuilds from the refreshed mirror. This mirrors the ManagedGit
 /// execution model: a background poll work kind under the per-Vault mutation
 /// boundary, never serving a per-request note read directly (ADR-01).
@@ -2450,6 +2451,16 @@ pub async fn dispatch_webdav_turn(
     match result {
         Ok(()) => {
             drop(mutation_guard);
+            info!(
+                %vault_id,
+                pulled = outcome.pulled,
+                refreshed = outcome.refreshed,
+                pushed = outcome.pushed,
+                deleted = outcome.deleted,
+                created_dirs = outcome.created_dirs,
+                errors = outcome.errors,
+                "webdav sync turn completed"
+            );
             // The sync created/filled the mirror; re-derive local-content
             // availability so the live snapshot flips to Active (browse +
             // mutate) without waiting for the next reconcile — mirrors the

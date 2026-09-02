@@ -8,10 +8,11 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use super::layers::MARKER_FILE_NAME;
 
 /// Applied before any user pattern, so a user `!` negation can reinstate one.
-pub const DEFAULT_EXCLUDE_PATTERNS: [&str; 6] = [
+pub const DEFAULT_EXCLUDE_PATTERNS: [&str; 7] = [
     ".obsidian/",
     ".trash/",
     ".hatchdoor-trash/",
+    ".hatchdoor/",
     ".DS_Store",
     "*.tmp",
     "*.sync-conflict-*",
