@@ -190,6 +190,33 @@ The complete playbook — registration, token sync, the real 35-tool surface,
 operation templates, the hash-guard rule, the VaultAgent role, drift-detection
 cron — is in [`HERMES.md`](HERMES.md).
 
+### Operational caveats (live-verified 2026-09-02)
+
+1. **MCP `move_note`/`delete_note`/`archive_note` do NOT propagate to Google
+   Drive.** The sync engine is deliberately pull-side-only for deletions (root-404
+   safety), so a move/delete changes only the mirror + index, and the next sync
+   turn (~6.5 min) RESTORES the file from gdrive — observed reversion of a
+   completed `move_note` within one turn. To make a delete/move stick: delete the
+   file on the remote FIRST (curl `DELETE` to the WebDAV endpoint at
+   `http://<sidecar>:42825/<urlencoded-path>` with `WEBDAV_USER`/`WEBDAV_PASS`),
+   let one sync turn prune the mirror, then recreate at the target path if moving.
+   `create_note`/`update_note` DO propagate (push side); only delete/move are
+   pull-side-only.
+2. **Direct writes to the mirror must be owned by the container user
+   (uid 65532).** Content written to `<mirror>/...` as host root leaves root-owned
+   files/dirs; the container's next pull/push fails EACCES on that subtree.
+   Symptom: every turn logs `errors=2` with all other counters 0 and no
+   error-level log line. Fix: `chown 65532:65532` the affected mirror paths.
+3. **The rclone WebDAV sidecar caches directory listings** — files written to
+   gdrive out-of-band (direct rclone/Drive API) can be invisible to PROPFIND
+   until cache expiry. `docker restart rclone-webdav` clears it (stateless
+   proxy; the vault tolerates one missed turn).
+4. **Repo documentation layout convention:** per-repo docs live in the vault at
+   `Homelab/02 Projects/<Repo>/` as `<Repo>.md` (project facts) + `Change Log.md`
+   (history, newest first); container/deployment docs stay under
+   `Homelab/02 Projects/Docker/<service>/`. Index entries use FULL-PATH wikilinks
+   because note slugs collide across folders (`change-log-N`, `-readme` suffixes).
+
 ## Syncing with upstream
 
 ```bash
