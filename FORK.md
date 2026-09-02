@@ -28,6 +28,7 @@ Fork point: upstream merge `e631857`. All commits after it, in order:
 | `68a22d0` | `docs`: add Hermes integration blurb to README, link HERMES.md |
 | `f13441c` | `fix(webdav)`: WebDAV sync-turn scheduler — the missing Phase D trigger (see below) |
 | `f3dd537` | `fix(webdav)`: publish local content after successful sync so activation flips live |
+| `faaa77e` | `fix(webdav)`: reconcile remote deletions and edits in the sync engine (see below) |
 
 ### Details of the security commit (`04fee5e`)
 
@@ -91,6 +92,44 @@ Verified: `cargo check` and `cargo check --tests` clean; module-map gate passes;
 the full suite (843 tests) passes in the Docker test image (`Dockerfile.test`,
 non-root user); deployed live — a WebDAV-sourced vault self-heals from
 missing-mirror to indexed-and-browsable without any manual API call.
+
+### Details of the sync reconciliation commit (`faaa77e`)
+
+The sync engine as originally shipped was **additive-only**: it pulled remote
+files missing locally and pushed any local file the remote did not list, but it
+never refreshed files present on both sides and never removed mirror files
+whose remote counterpart had been deleted. On the gdrive build this meant
+Obsidian-side deletions stayed in the mirror/index forever *and* were
+re-uploaded to gdrive every sync turn (~6.5 min; the mirror copy is treated as
+"new local content"), while Obsidian edits to existing notes never reached the
+mirror — Hatchdoor silently served stale content. Fix (`src/vault/remote/sync.rs`,
+rewritten as a per-directory reconciliation):
+
+- **Pull / refresh:** files missing locally are downloaded; files whose remote
+  fingerprint (size + etag from the PROPFIND listing) changed since the last
+  successful turn are re-downloaded and overwrite the mirror copy. The
+  fingerprints persist in `<mirror>/.hatchdoor/webdav-sync.json` (written
+  atomically at the end of a successful turn; absent/corrupt ⇒ first-run
+  state, which refreshes everything once and heals pre-existing staleness).
+- **Deletion propagation:** a mirror file/dir no longer listed on the remote is
+  a stale remnant of a remote deletion and is removed locally — never
+  re-uploaded. Emptied local dirs are pruned.
+- **Restricted push:** only local files Hatchdoor created/modified since the
+  last successful sync (`mtime > last_sync_at`) are PUT'd, after MKCOL'ing any
+  missing remote ancestor collections. `.hatchdoor*` names are never synced.
+- **404 tolerance:** a subcollection that 404s mid-walk is treated as empty so
+  a deletion racing the turn can no longer abort the whole sync; a 404 on the
+  ROOT collection stays turn-fatal so a misconfigured source cannot classify
+  the whole mirror as stale and wipe it.
+- `src/vault/exclude.rs`: `.hatchdoor/` added to the built-in noise patterns so
+  the sidecar never wakes the vault watcher or indexer.
+- `src/vault_runtime.rs`: turn outcome (`pulled/refreshed/pushed/deleted/
+  created_dirs/errors`) logged at info after each successful sync.
+
+Verified: 9 new unit tests in `sync.rs`; 852 total tests pass in the Docker
+test image; live-verified on the gdrive build — a folder deleted in Obsidian
+stays deleted on gdrive across sync turns (no resurrection), the mirror drops
+the stale tree on the next turn, and edited notes refresh in the mirror.
 
 ### Details of the fuse resilience commit (`cecadd1`)
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (fork `faaa77e`)
+
+- **WebDAV sync is now a full reconciliation, not additive-only.** Previously
+  the sync engine pulled remote files missing locally and pushed any local file
+  the remote did not list, but never refreshed files present on both sides and
+  never removed mirror files whose remote counterpart had been deleted. On a
+  WebDAV-sourced vault (the Google Drive build), Obsidian-side deletions stayed
+  in the mirror/index and were re-uploaded to gdrive every sync turn, while
+  Obsidian edits to existing notes never reached the mirror. The engine now:
+  refreshes files whose remote fingerprint (size + etag) changed since the last
+  successful turn; deletes mirror files/dirs whose remote counterpart is gone
+  (never re-uploading them); pushes only files Hatchdoor itself created or
+  modified since the last successful sync; tolerates a subcollection 404
+  mid-walk instead of aborting the whole turn; and persists per-vault sync
+  fingerprints in a `.hatchdoor/webdav-sync.json` sidecar written atomically.
+  `.hatchdoor/` was added to the built-in noise-exclusion patterns so the
+  sidecar never wakes the vault watcher. Sync turn outcomes are logged at info
+  (`pulled/refreshed/pushed/deleted/created_dirs/errors`).
+
 ## v2.5.0 - 2026-08-17
 
 - Attachment embeds written the way Obsidian writes them now render. A bare
