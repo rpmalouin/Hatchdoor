@@ -18,12 +18,13 @@
 > **This is `rpmalouin/Hatchdoor`, a fork.** It tracks upstream
 > [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor) and carries
 > a small, documented set of deltas on top: a dependency security-hardening
-> commit, native WebDAV vault support, and fuse-vault write/index resilience
-> (see [`FORK.md`](FORK.md)). The reference deployment of this fork is the
-> **gdrive build**: a Google Drive vault (`gdrive:MyObsidian`) served to
-> Hatchdoor through an `rclone-webdav` sidecar, synced into a local mirror, and
-> exposed to AI agents over MCP. The code and the `battermanz/hatchdoor` Docker
-> image are otherwise unchanged.
+> commit, native WebDAV vault support (whose sync engine reconciles remote
+> edits and deletions instead of only pulling additions), and fuse-vault
+> write/index resilience (see [`FORK.md`](FORK.md)). The reference deployment of
+> this fork is the **gdrive build**: a Google Drive vault
+> (`gdrive:MyObsidian`) served to Hatchdoor through an `rclone-webdav` sidecar,
+> synced into a local mirror, and exposed to AI agents over MCP. The code and
+> the `battermanz/hatchdoor` Docker image are otherwise unchanged.
 
 > **Hermes integration:** this fork ships with a complete, verified playbook for
 > wiring Hatchdoor's MCP server into [Hermes Agent](https://hermes-agent.nousresearch.com) —
