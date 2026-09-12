@@ -148,16 +148,30 @@ CLI alias `vaultagent` is created automatically.
 
 ## 7. Drift detection (cron)
 
-Job: weekly (e.g. `0 3 * * 1`), `skills: ["vault-maintenance"]`,
-`enabled_toolsets: ["file", "code_execution"]` (file only to write the
-report — vault access stays MCP-only), `workdir` = the Hatchdoor fork.
+Job `0a8f84d65e36` ("Vault drift detection + repair"): weekly `0 3 * * 1`,
+`skills: ["vault-maintenance"]`, `enabled_toolsets: ["file"]` (file tools are
+for reading the spillover cache and writing the report — vault access stays
+MCP-only; cron layers the enabled MCP servers onto the per-job toolset list,
+so the Hatchdoor surface remains available), `workdir` = the Hatchdoor fork.
+
+**`code_execution` is BLOCKED in cron runs** regardless of `enabled_toolsets`
+(there is no user present to approve the call), so a prompt that says "parse
+the spillover with `execute_code`" sends the run into `BLOCKED:` retries.
+Never instruct the job to use it: read spillover with `search_files` (regex)
++ `read_file` (offset/limit) instead.
+
 Detection: `list_vaults` → `get_graph` + `get_note_links` (broken wikilinks,
 orphans) → `recently_modified` + `get_stats` + `search_notes` (staleness).
 Repair ONLY clear-cut cases (`move_rename_note` for broken links,
 `edit_note` for stale links, `archive_note` for orphans — never delete);
-ambiguous items go to "needs human review", not acted on. The graph response
-can be large — parse the spillover cache file with `code_execution`, not raw
-reads.
+ambiguous items go to "needs human review", not acted on. Prefer per-note
+`get_note_links` over the whole-vault graph; when a response does spill to
+`/root/.hermes/cache/spillover/`, read only the keys you need.
+
+Tool-call hygiene (the live run lost time to all three): one entry per
+`tool_call` — never batch MCP tools with local/file tools
+(`Local tools require one entry per tool_call`); `get_stats` needs `scope`;
+`get_note` needs `vault_id` + `slug`.
 
 OpsBrain report contract (write every run, even when empty):
 `/appdata/OpsBrain/logs/vault_drift_report.json`:
@@ -167,7 +181,10 @@ Include repaired AND still-broken AND review items.
 
 The gateway is the scheduler: jobs never fire unless
 `hermes gateway install && hermes gateway start` (systemd user service,
-enable linger). Verify with `hermes gateway status`.
+enable linger). Verify with `hermes gateway status`; after a `hermes update`,
+run `hermes gateway restart` — until you do, cron has no way to know the
+gateway is running pre-update modules ("mixed sys.modules", reported by
+`hermes cron doctor`). Alerting for this job is covered in §11.
 
 ## 8. Fork fixes and rebuild (hatchdoor:local)
 
@@ -204,6 +221,19 @@ Verify with `hermes mcp test hatchdoor` and `list_vaults` (search must read
   "unreachable" backoff on the Hermes side. Diagnose (server healthy? `/mcp`
   still 401?) instead of retrying; the container being healthy does not mean
   the setup gate is clear.
+- **A blocked context file is silent.** Any auto-loaded context file
+  (`HERMES.md`, `AGENTS.md`, `.cursorrules`, `SOUL.md`) is dropped **whole**
+  from the prompt when a single line matches a threat pattern — scope
+  `context` blocks rather than warns, and nothing else fails loudly. This file
+  was dropped from every cron run for a week because of one sample line: a
+  probe written as a curl command whose `Authorization` header was built from
+  a shell variable (dollar sign + a name ending in `TOKEN`) on the same line.
+  `agent.log` said so plainly (`Context file HERMES.md blocked: exfil_curl`)
+  while the job kept running without its repo context. Write such variables in
+  docs without the leading dollar sign (e.g. `<MCP_TOKEN>`) and never put a
+  real token in a tracked file. Check any context file with
+  `agent.prompt_builder._scan_context_content(text, "HERMES.md")`: it returns
+  the content, or a `[BLOCKED: …]` marker.
 - **get_note params**: `vault_id` + `slug` (not `scope`).
 - The job profile has no clock tool — anchor report timestamps to a known
   source if precision matters.
@@ -218,7 +248,40 @@ hermes mcp test hatchdoor              # ✓ Connected + 35 tools
 hermes -p vaultagent mcp test hatchdoor # role agent reaches the server
 hermes -p vaultagent tools list        # no file/terminal/web toolsets
 hermes gateway status                  # active (cron fires)
+hermes cron list                       # job, schedule, next run, last status
+hermes cron doctor                     # dispatch/delivery config health
 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:42824/mcp   # 401
 ```
 End-to-end write test (proves the fuse write fix): `create_note` a scratch
 note → `get_note` (hash matches) → `delete_note` (trashed).
+
+## 11. Alerts when the job fails (cron delivery)
+
+`deliver: local` only saves output. `failure_deliver: "bot-chat"` sends
+**failures** into the profile's canonical Bot Chat as a message the bot
+replies to — not a passive notification: it starts an agent turn with full
+tools that will investigate (tens of API calls per failure, and it may act).
+`bot-chat` needs no messaging platform: `cron/scheduler_preflight.py` skips
+bot-chat targets, so it works on a host where nothing is connected. Before
+pointing `deliver` at a platform name, confirm one exists —
+`~/.hermes/gateway_state.json` (`"platforms": {}` means none) and
+`~/.hermes/channel_directory.json` (0 targets).
+
+Which failures alert:
+
+| failure | recorded as | alert? |
+|---|---|---|
+| a run raises (script non-zero exit, agent crash, timeout) | execution row + `last_error` | **yes** (`_deliver_crash_failure`) |
+| dispatch/fire fails (`Restart-safe cron worker dispatch failed: …`) | `last_fire_error` + execution row, visible via `hermes cron doctor` / `hermes cron incidents` | **no** |
+
+A missed fire — the class that hit this job on 2026-09-07 — is therefore
+silent, which is why the downstream freshness check matters: OpsBrain's
+`sources.vault_drift` (`max_age_s`, 8 days by default) reports the source
+`up: false` / `attention: stale_report` once the report goes stale, i.e. about
+a day after a missed Monday run.
+
+Prove a lane end-to-end rather than trusting the config: create a throwaway
+`no_agent` job whose script exits non-zero, give it
+`failure_deliver: "bot-chat"`, fire it, and watch for a
+`hermes chat -c Bot Chat --create-if-missing` process plus a new "Bot Chat"
+session. Remove the job and its script afterwards.

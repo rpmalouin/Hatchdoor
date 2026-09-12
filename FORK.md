@@ -29,6 +29,11 @@ Fork point: upstream merge `e631857`. All commits after it, in order:
 | `f13441c` | `fix(webdav)`: WebDAV sync-turn scheduler — the missing Phase D trigger (see below) |
 | `f3dd537` | `fix(webdav)`: publish local content after successful sync so activation flips live |
 | `faaa77e` | `fix(webdav)`: reconcile remote deletions and edits in the sync engine (see below) |
+| `c06ec4a` | `docs(deploy)`: document the gdrive build — WebDAV vault source, MCP wiring, sample compose + `.env` |
+| `620bc36` | `docs`: record the WebDAV sync reconciliation delta in FORK.md and CHANGELOG |
+| `ae5e7be` | `docs`: note the reconciling WebDAV sync engine in the README fork banner |
+| `2e9ba83` | `docs`: record gdrive-build operational caveats in FORK.md |
+| `a08bde2` | `docs(hermes)`: write the raw MCP probe's token variable as `<VAR>` (no `$`), which the context-file scanner otherwise blocks |
 
 ### Details of the security commit (`04fee5e`)
 
