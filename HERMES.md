@@ -65,7 +65,7 @@ hermes mcp test hatchdoor     # → ✓ Connected + every tool listed (35)
 
 Raw probe (StreamableHTTP needs the session-id handshake; some servers answer
 SSE with a `data: ` prefix — strip it before parsing):
-`curl -s -D /tmp/h -X POST http://127.0.0.1:42824/mcp -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'`
+`curl -s -D /tmp/h -X POST http://127.0.0.1:42824/mcp -H "Authorization: Bearer <TOKEN>" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}'`
 then send `tools/list` in a second POST carrying the `mcp-session-id` response
 header.
 
