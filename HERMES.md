@@ -179,6 +179,33 @@ OpsBrain report contract (write every run, even when empty):
 "findings": [{"path": "<note path>", "issue": "<description>"}]}`
 Include repaired AND still-broken AND review items.
 
+What OpsBrain actually does with it (`collector/vault_drift_ingest.py`, verified
+against the live pipeline 2026-09-14):
+
+- `findings` decides `up`: a present list (even empty) = up; a missing key = the
+  source is reported down. Always write the key.
+- **Categories are derived from the free-text `issue`, not from a field you set.**
+  `"broken"` → `broken_links`; `"orphan"` → `orphans`; `"stale"`/`"metadata"` →
+  `stale_metadata`; anything else → `needs_review` (counted, never actionable).
+  "broken" is matched BEFORE "link", so an orphan whose issue says "no inbound
+  links" is not misread as a broken link — keep the wording precise. Each list is
+  capped at 30 entries for the digest/dashboard.
+- The report's own `attention` field is **informational only** — OpsBrain recomputes
+  its own ladder: `stale_report` > `needs_review`/`actionable` (broken links or
+  orphans) > `attention` (stale metadata) > `low` > `none`.
+- Downstream: the collector's `vault_drift` block feeds the reasoner digest, the
+  dashboard (`source: "hatchdoor"`, counts + one-line summary) and a **notify-only**
+  `notify_vault_drift` action. OpsBrain never writes to the vault.
+- **Timestamp format decides whether the freshness guard works at all.** OpsBrain
+  computes `age_s`/`stale` with `datetime.fromisoformat`, which on Python 3.10
+  REJECTS a trailing `Z` (it throws, `age_s` stays null, `stale` stays false, and the
+  whole `max_age_s` window is silently inert). Emit an explicit offset —
+  `2026-09-14T03:00:02+00:00` — not `…T03:00:02Z`. The producer still emits `Z` today
+  (§11); until that changes, do not rely on OpsBrain noticing a missed run.
+- Cadence context: the job is weekly (`0 3 * * 1`), so a report up to ~7 days old is
+  NORMAL — OpsBrain's window is 8 days (`sources.vault_drift.max_age_s: 691200`)
+  before it calls the source stale.
+
 The gateway is the scheduler: jobs never fire unless
 `hermes gateway install && hermes gateway start` (systemd user service,
 enable linger). Verify with `hermes gateway status`; after a `hermes update`,
@@ -236,7 +263,10 @@ Verify with `hermes mcp test hatchdoor` and `list_vaults` (search must read
   the content, or a `[BLOCKED: …]` marker.
 - **get_note params**: `vault_id` + `slug` (not `scope`).
 - The job profile has no clock tool — anchor report timestamps to a known
-  source if precision matters.
+  source if precision matters. When you do write one, make it parseable by
+  OpsBrain: `datetime.fromisoformat` on Python 3.10 accepts
+  `2026-09-14T03:00:02+00:00` but NOT the `…Z` form, and an unparseable stamp
+  silently disables OpsBrain's staleness window (§7).
 - Never put the bearer token in any committed file; it lives in the
   container env and `~/.hermes/.env` only.
 
@@ -254,6 +284,21 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:42824/mcp   # 401
 ```
 End-to-end write test (proves the fuse write fix): `create_note` a scratch
 note → `get_note` (hash matches) → `delete_note` (trashed).
+
+Prove the OpsBrain hand-off (drift job → report → collector), read-only:
+```
+# what OpsBrain derives from the report right now
+python3 - <<'PY'
+import sys; sys.path.insert(0, "/appdata/OpsBrain")
+from collector.vault_drift_ingest import pull_report, classify, create_context_nodes
+r = pull_report("/appdata/OpsBrain/logs/vault_drift_report.json", max_age_s=691200)
+print("up:", r.get("up"), "age_s:", r.get("age_s"), "stale:", r.get("stale"), "err:", r.get("err"))
+c = classify(r); print("counts:", c["counts"])
+print("attention:", create_context_nodes(r, c)["attention"])
+PY
+```
+`age_s: None` on a report that has a timestamp means the stamp was unparseable
+(`…Z`) — the staleness guard is off, not "fresh" (§7).
 
 ## 11. Alerts when the job fails (cron delivery)
 
@@ -275,10 +320,19 @@ Which failures alert:
 | dispatch/fire fails (`Restart-safe cron worker dispatch failed: …`) | `last_fire_error` + execution row, visible via `hermes cron doctor` / `hermes cron incidents` | **no** |
 
 A missed fire — the class that hit this job on 2026-09-07 — is therefore
-silent, which is why the downstream freshness check matters: OpsBrain's
-`sources.vault_drift` (`max_age_s`, 8 days by default) reports the source
-`up: false` / `attention: stale_report` once the report goes stale, i.e. about
-a day after a missed Monday run.
+silent. The intended backstop is OpsBrain's `sources.vault_drift` window
+(`max_age_s`, 8 days): a stale report is meant to surface as
+`attention: stale_report` plus a `notify_vault_drift` "Vault-drift report is
+stale; cron may not have run" notification, repeated **every** collector cycle
+while the flag is set (unlike the GPU notice, it has no once-a-day cap).
+
+That backstop is currently inert, and the reason is worth knowing: OpsBrain's
+`pull_report` parses the report `timestamp` with `datetime.fromisoformat`, which
+Python 3.10 rejects for the trailing-`Z` form the producer writes. Parsing throws,
+`age_s` is left `null`, `stale` is left `false` — so a missed Monday run is NOT
+detected today. Fix on either side: emit `+00:00` instead of `Z` in the report
+(preferred, §7), or make the reader accept `Z`. Verify with the read-only probe
+in §10 — `age_s: None` next to a timestamp means the guard is off.
 
 Prove a lane end-to-end rather than trusting the config: create a throwaway
 `no_agent` job whose script exits non-zero, give it

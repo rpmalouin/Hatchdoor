@@ -34,6 +34,7 @@ Fork point: upstream merge `e631857`. All commits after it, in order:
 | `ae5e7be` | `docs`: note the reconciling WebDAV sync engine in the README fork banner |
 | `2e9ba83` | `docs`: record gdrive-build operational caveats in FORK.md |
 | `a08bde2` | `docs(hermes)`: write the raw MCP probe's token variable as `<VAR>` (no `$`), which the context-file scanner otherwise blocks |
+| `f5c5da4` | `docs(hermes)`: document cron alerting, correct the drift-job spec, list unlisted deltas |
 
 ### Details of the security commit (`04fee5e`)
 
