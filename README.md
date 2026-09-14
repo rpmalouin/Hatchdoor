@@ -74,6 +74,7 @@ under close human review, with tests and a documented safety model.
 - [What You Get](#what-you-get)
 - [Screenshots](#screenshots)
 - [Who It Is For](#who-it-is-for)
+- [What Is Next](#what-is-next)
 - [Quick Start With Docker](#quick-start-with-docker)
 - [Data And Safety Model](#data-and-safety-model)
 - [Configuration](#configuration)
@@ -145,6 +146,33 @@ semantic search, and local development.
 Hatchdoor is not a hosted sync service, not a multi-user collaboration platform,
 and not a replacement for Obsidian. It is a self-hosted companion for a Markdown
 vault you control.
+
+## What Is Next
+
+The next large feature is multi-account handling with permission scoping. Today
+Hatchdoor assumes a single trusted user on a private deployment, so whoever
+reaches the instance sees every vault it serves. The plan is to let several
+people and agents share one instance, each scoped to the vaults they are
+granted, with an admin role that manages the rest. A household or a small team
+could then run one Hatchdoor instead of one per person.
+
+v2.5.0 already made vaults independent, addressable things the product manages,
+including vault scoping for MCP agents. What is missing is the half that was
+deliberately deferred: accounts, authentication, and an access boundary the
+server enforces rather than the UI implies. Targeted at v3.
+
+Two other things are wanted but not slotted to a version yet:
+
+- **Agent provenance and undo.** Which agent changed a note, a before/after diff
+  beside the commit it produced, and one-click revert. Today git is the whole
+  answer, and reading a commit log is not the same as seeing what an agent did
+  to your note.
+- **Vault integrity checks.** A vault-scoped lint for orphaned notes, broken
+  wikilinks, and layer markers whose declaration has vanished, so a vault an
+  agent maintains unattended cannot quietly drift out of shape.
+
+The [product roadmap](docs/roadmap/product-roadmap.md) has the full set of
+workstreams and where each one stands.
 
 ## Quick Start With Docker
 
@@ -230,7 +258,7 @@ setup finishes.
 The image is published on [Docker Hub](https://hub.docker.com/r/battermanz/hatchdoor):
 
 ```text
-battermanz/hatchdoor:latest          # also version tags, e.g. 2.5.0
+battermanz/hatchdoor:latest          # also version tags, e.g. 2.6.1
 battermanz/hatchdoor:podman-latest   # for Podman users (podman-<version> too)
 ```
 
@@ -255,7 +283,9 @@ Docker Compose mounts:
 Hatchdoor is designed around a simple rule: your Markdown vault is the source of
 truth.
 
-- Markdown files live in `VAULT_PATH`.
+- Markdown files live in each Vault's own folder, as recorded in the Vault
+  registry. `VAULT_PATH` is not that location: it is read once on a first start
+  to seed the registry with a first local Vault, and ignored from then on.
 - Vault identities and source definitions live in `/data/state/vaults.json`.
   A Vault's Git HTTPS credential is stored there too, so the file is created
   with `0600` permissions on Unix and belongs in a backup you treat as secret.
@@ -266,7 +296,7 @@ truth.
 - The SQLite cache should live outside the vault.
 - Hatchdoor scans `.md` files under the vault while excluding built-in and
   configured noise paths (including `.hatchdoor-trash`).
-- Delete actions move notes and referenced assets into `.hatchdoor-trash`.
+- Delete actions move notes, and the assets kept inside their own folder, into `.hatchdoor-trash`.
 - Archive actions move notes under `HATCHDOOR_ARCHIVE_PREFIX`.
 - Browser write actions are available only when the vault is writable.
 - MCP is disabled by default.
@@ -279,10 +309,11 @@ Upgrading an existing single-Vault deployment requires persistent
 guide](docs/migrations/legacy-single-vault.md) for detection, recovery, and
 rollback constraints.
 
-If `VAULT_PATH` contains no Markdown files, Hatchdoor creates a small starter
-vault (a lightweight PARA-style structure with onboarding notes) before the
-first index build. Existing vaults are never seeded or modified. The starter
-notes are ordinary Markdown you can edit, move, or delete like any other.
+If the folder `VAULT_PATH` points at contains no Markdown files, Hatchdoor
+creates a small starter vault there (a lightweight PARA-style structure with
+onboarding notes) before the first index build. Existing vaults are never
+seeded or modified. The starter notes are ordinary Markdown you can edit, move,
+or delete like any other.
 
 For write access: browser writes, MCP writes, attachment uploads, and git sync
 all require the vault mount, cache directory, and state directory to be
@@ -383,8 +414,8 @@ Run the backend:
 cargo run
 ```
 
-By default, local source runs bind to `127.0.0.1:42824` and read `./vault`.
-Point Hatchdoor at a real vault with:
+By default, local source runs bind to `127.0.0.1:42824` and seed their first
+Vault from `./vault`. Point that first start at a real vault with:
 
 ```bash
 VAULT_PATH=/path/to/notes cargo run
@@ -414,10 +445,11 @@ non-loopback bind can expose your vault to the network.
 
 ### The app starts with a starter vault
 
-Hatchdoor seeds starter notes only when `VAULT_PATH` contains no Markdown
-files. If you expected an existing vault, this almost always means the
-container mounted an empty directory: double-check `HOST_VAULT_PATH` in
-`.env` isn't a typo or a stale Docker volume shadowing the mount.
+Hatchdoor seeds starter notes only on a first start, and only when the folder
+`VAULT_PATH` points at holds no Markdown files. If you expected an existing
+vault, this almost always means the container mounted an empty directory:
+double-check `HOST_VAULT_PATH` in `.env` isn't a typo or a stale Docker volume
+shadowing the mount.
 
 For write permission issues, MCP `401`/`403`, git sync problems, and more, see
 [How to troubleshoot common
@@ -458,12 +490,13 @@ npm test
 npm run build
 ```
 
-Build and publish the Docker image:
+Build and publish the Docker image (requires BuildKit; see
+[container build targets and Cargo caching](docs/development/container-builds.md)):
 
 ```bash
 docker build -t battermanz/hatchdoor:latest .
-docker tag battermanz/hatchdoor:latest battermanz/hatchdoor:2.5.0
-docker push battermanz/hatchdoor:2.5.0
+docker tag battermanz/hatchdoor:latest battermanz/hatchdoor:2.6.1
+docker push battermanz/hatchdoor:2.6.1
 docker push battermanz/hatchdoor:latest
 ```
 

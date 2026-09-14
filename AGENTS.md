@@ -142,41 +142,63 @@ It checks uniform lightness per theme, the chroma ceilings, and 4.5:1 contrast
 on the tinted and badge surfaces, and exits non-zero on a violation. No
 dependencies.
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+## Branching
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+All work happens on a branch off `development`. Never commit to `development`
+or `main` directly, whatever the size of the change.
 
-### When to use graph tools FIRST
+Before the first edit, check the current branch and cut one if you are sitting
+on a protected branch:
 
-- **Exploring code**: `semantic_search_nodes_tool` or `query_graph_tool` instead of Grep
-- **Understanding impact**: `get_impact_radius_tool` instead of manually tracing imports
-- **Code review**: `detect_changes_tool` + `get_review_context_tool` instead of reading entire files
-- **Finding relationships**: `query_graph_tool` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview_tool` + `list_communities_tool`
+```bash
+git branch --show-current
+git switch -c <prefix>/<short-slug> development
+```
 
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+Use `feature/`, `fix/`, `docs/`, or `refactor/` as the prefix. Push that branch
+and open a pull request against `development`; `main` is the release branch and
+receives only merges from `development`.
 
-### Key Tools
+`development` refuses a direct push, so cutting the branch after the work is
+committed means moving commits off a branch you cannot push, not a quick fix.
+Check first.
 
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
+Every merge is a merge commit, including `development` into `main`. Do not
+squash, do not rebase-merge, and never force-push `development` or `main`.
 
-### Workflow
+## Documentation freshness before merging into `development`
 
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes_tool` for code review.
-3. Use `get_affected_flows_tool` to understand impact.
-4. Use `query_graph_tool` pattern="tests_for" to check coverage.
+Merging work into `development` requires a documentation freshness review. Run:
+
+```bash
+just docs-freshness
+```
+
+It names the user-facing surfaces the branch changed and the `docs/user-vault`
+notes that document them, then exits non-zero. That exit is the trigger, not a
+failure to work around: the script cannot judge whether a note still reads
+true, so it hands you the reading list instead.
+
+Open every note it names and compare it against what the branch actually
+changed. Update the notes that drifted (wording, examples, tool and setting
+names, described behavior) as part of this branch, not later. A note reported
+as "edited on this branch" only means the file moved; check it like the rest.
+
+Then record the review:
+
+```bash
+just docs-freshness-ack
+```
+
+Do not acknowledge a review you did not perform, and do not treat a clean
+`docs-freshness` run as permission to skip reading when you know a note is
+stale. If a surface changed that the script does not yet know about, add it to
+the table in `scripts/check-docs-freshness.mjs`, cover it in
+`scripts/check-docs-freshness.test.mjs`, and say so at hand-off.
+
+After editing that table, or after renaming or moving a note under
+`docs/user-vault`, confirm every entry still resolves:
+
+```bash
+node scripts/check-docs-freshness.mjs --validate-table
+```

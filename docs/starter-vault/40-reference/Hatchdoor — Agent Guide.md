@@ -25,8 +25,15 @@ Start with `list_vaults` and retain immutable `vault_id` values; there is no
 selected or default Vault. Every collection read uses `scope` (one Vault ID or
 `all`), and every exact read or mutation uses one `vault_id`.
 
-Use `search_notes` for most questions. There is no scope-less metadata-query
-tool.
+Use `search_notes` for most questions.
+
+Use `query_notes` when a note's tags, folder or properties decide the answer on
+their own: every note carrying a
+tag, everything under a folder, notes whose frontmatter property has a given
+value or has passed a date. It selects rather than ranks, so it never comes back
+empty for want of a good enough match, and it needs no vectors, so it answers in
+full on a Vault that is still indexing. `search_notes` is for what a note says;
+`query_notes` is for what a note is. Neither takes the other's arguments.
 
 Use semantic search when the user describes an idea, topic, project, or relationship in natural language. Phrase the query as a sentence that explains what you are trying to find.
 
@@ -47,11 +54,19 @@ Use `get_note` only after search or wikilink resolution identifies the note you 
 
 Use `get_tree` only when folder structure or broad navigation is the task.
 
+## Stale collection reads
+
+`search_notes`, `query_notes`, `get_tree`, `get_graph`, `get_stats`, and `recently_modified` answer from a published snapshot rather than reading every file, and they report how fresh that snapshot is. A result carrying `partial: true` means not every enabled Vault contributed; the reason sits on that Vault's entry in `participants`, so read it there rather than guessing from `partial` alone.
+
+An entry reading `stale` is the case an agent can do something about: the Vault's snapshot is known to be behind its Markdown. Call `refresh_vault` with that `vault_id` to request the index turn that republishes it, then read again.
+
+`refresh_vault` returns as soon as the turn is admitted — `queued`, or `coalesced` when a turn for that Vault is already pending — not when the turn finishes. So the response confirms the request landed, not that the index is rebuilt; confirm the outcome from the freshness fields of a second read. It is not `sync_vault`: it contacts no Git remote and works on any enabled Vault, including a plain local one. A read that looks stale is never a reason to fall back to editing files directly.
+
 ## Editing workflow
 
 Before editing an existing note:
 
-1. Fetch it with `get_note`.
+1. Fetch it with `get_note`, or with `get_frontmatter` when only its properties are changing — that answer carries the same content hash without the body.
 2. Use the returned content hash as the expected hash.
 3. Make the smallest change that satisfies the request.
 
@@ -100,7 +115,8 @@ If git sync is enabled, Hatchdoor owns the commit and push workflow for vault wr
 
 After writes, use `list_vaults` to inspect the target Vault's Git status. For
 eligible managed-Git Vaults, `sync_vault` and `retry_vault` require its explicit
-`vault_id`.
+`vault_id`. Neither does anything for a Vault with no configured remote, and
+neither rebuilds the search index: for that, see [[#Stale collection reads]].
 
 Do not run manual git commands against the vault unless the user asks or Hatchdoor reports that automatic sync is disabled.
 

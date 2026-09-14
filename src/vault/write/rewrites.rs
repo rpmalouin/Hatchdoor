@@ -2,20 +2,55 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::vault::types::VaultIndex;
+use crate::cache::parse::parse_fence_marker;
+use crate::vault::paths::{normalize_link_target, normalize_title, split_wikilink_note_body};
+use crate::vault::types::{NoteEntry, VaultIndex};
 
 use super::types::{TextRewrite, WriteError};
 
+/// Where a note is going, in the two forms a rewrite needs: the link target
+/// other notes will point at, and the filesystem path its own body will be
+/// read back from. They are one fact, so they travel together and a plan
+/// cannot carry one without the other.
+#[derive(Clone, Copy)]
+pub(super) struct MovedTo<'a> {
+    /// The moved note's new vault-relative path, without the `.md` extension.
+    pub(super) new_target: &'a str,
+    /// Where the note's body will be by the time rewrites are applied.
+    pub(super) destination: &'a Path,
+}
+
+/// Retarget every backlink to the moved note, keeping the form its author wrote.
+///
+/// A link written as a bare title stays a bare title, a path-qualified link
+/// gets the new full path, and `new_target: None` removes the link entirely
+/// (delete). The bare form is only safe while the new title names exactly one
+/// note, so a title another note already carries falls back to the full path:
+/// a link that resolved before the move must still resolve after it (#235).
+///
+/// The moved note holds links to itself like any other note, and its
+/// self-links follow the same rules (#254). Its rewrite is keyed to
+/// [`MovedTo::destination`] rather than the note's own path, because the note
+/// is moved before any rewrite is applied and one aimed at the old path could
+/// not land. `destination: None` is delete: the link is removed from every
+/// other note, and the trashed body's link to itself is left as written
+/// because it is moot there.
 pub(super) fn backlink_rewrite_plan(
     index: &VaultIndex,
     moved_slug: &str,
-    new_target: Option<&str>,
+    moved_to: Option<MovedTo<'_>>,
 ) -> Result<Vec<TextRewrite>, WriteError> {
+    let new_target = moved_to.map(|moved| moved.new_target);
+    let entries = index.ordered_entries();
+    let bare_new_target =
+        new_target.and_then(|target| unambiguous_bare_title(&entries, moved_slug, target));
     let mut rewrites = Vec::new();
-    for entry in index.ordered_entries() {
-        if entry.slug == moved_slug {
-            continue;
-        }
+    for entry in entries {
+        let rewrite_path = match moved_to {
+            _ if entry.slug != moved_slug => entry.path.clone(),
+            Some(moved) => moved.destination.to_path_buf(),
+            None => continue,
+        };
         let content = fs::read_to_string(&entry.path).map_err(|error| {
             WriteError::Io(format!(
                 "failed to read note '{}' for backlink rewrite: {error}",
@@ -23,22 +58,60 @@ pub(super) fn backlink_rewrite_plan(
             ))
         })?;
         let rewritten = transform_wikilinks(&content, |target| {
-            let should_change = index
-                .resolve_wikilink(target)
-                .is_some_and(|candidate| candidate.slug == moved_slug);
-            if !should_change {
+            let Some(candidate) = index.resolve_wikilink(target) else {
+                return Some(target.to_string());
+            };
+            if candidate.slug != moved_slug {
                 return Some(target.to_string());
             }
-            new_target.map(ToOwned::to_owned)
+            match bare_new_target.as_deref() {
+                Some(bare) if target_is_the_moved_notes_bare_title(target, &candidate.title) => {
+                    Some(bare.to_string())
+                }
+                _ => new_target.map(ToOwned::to_owned),
+            }
         });
         if rewritten != content {
             rewrites.push(TextRewrite {
-                path: entry.path,
+                path: rewrite_path,
                 content: rewritten,
             });
         }
     }
     Ok(rewrites)
+}
+
+/// The moved note's new bare title, when no *other* note in the pre-move index
+/// already carries it.
+///
+/// Only the moved note changes name, so the pre-move index answers the
+/// post-move question. `resolve_wikilink` tries `by_path_title` before
+/// `by_title`, but a bare title holds no `/` while a nested note's path key
+/// always does, so the only note a bare title can capture on the path pass is
+/// a root-level note whose relative path is its own title — which carries that
+/// title too, and so is already caught here.
+fn unambiguous_bare_title(
+    entries: &[NoteEntry],
+    moved_slug: &str,
+    new_target: &str,
+) -> Option<String> {
+    let bare = new_target.rsplit('/').next().unwrap_or(new_target);
+    let normalized = normalize_title(bare);
+    let taken_by_another_note = entries
+        .iter()
+        .any(|entry| entry.slug != moved_slug && normalize_title(&entry.title) == normalized);
+    (!taken_by_another_note).then(|| bare.to_string())
+}
+
+/// Whether this target is the moved note's own title, written bare.
+///
+/// A slug-form target (`[[some-note]]` for "Some Note") is machine-authored
+/// and takes the full path like any other non-title form; for a single-word
+/// title the two forms normalize alike, so the distinction only ever arises
+/// for multi-word titles.
+fn target_is_the_moved_notes_bare_title(target: &str, moved_title: &str) -> bool {
+    let normalized = normalize_link_target(target);
+    !normalized.contains('/') && normalize_title(&normalized) == normalize_title(moved_title)
 }
 
 pub(super) fn transform_wikilinks<F>(content: &str, transform_target: F) -> String
@@ -141,26 +214,11 @@ fn transform_wikilink_body<F>(body: &str, transform_target: &F) -> Option<String
 where
     F: Fn(&str) -> Option<String>,
 {
-    let target_end = body.find(['|', '#', '^']).unwrap_or(body.len());
-    let target = body[..target_end].trim();
+    let (target, suffix) = split_wikilink_note_body(body);
     if target.is_empty() {
         return Some(body.to_string());
     }
-    let suffix = &body[target_end..];
     transform_target(target).map(|new_target| format!("{new_target}{suffix}"))
-}
-
-pub(super) fn parse_fence_marker(trimmed_line: &str) -> Option<(u8, usize)> {
-    let bytes = trimmed_line.as_bytes();
-    let marker = *bytes.first()?;
-    if marker != b'`' && marker != b'~' {
-        return None;
-    }
-    let mut len = 1usize;
-    while len < bytes.len() && bytes[len] == marker {
-        len += 1;
-    }
-    if len >= 3 { Some((marker, len)) } else { None }
 }
 
 pub(super) fn merge_rewrites(left: Vec<TextRewrite>, right: Vec<TextRewrite>) -> Vec<TextRewrite> {
@@ -178,14 +236,25 @@ pub(super) fn merge_rewrites(left: Vec<TextRewrite>, right: Vec<TextRewrite>) ->
     merged
 }
 
-pub(super) fn rewrite_content_or_read(
-    path: &Path,
-    rewrites: &[TextRewrite],
-) -> Result<String, io::Error> {
+/// The content a plan already holds for `path`, if any rewrite targets it.
+///
+/// A later planner composes onto this rather than appending a second rewrite,
+/// because [`merge_rewrites`] keeps only the last entry per path and a second
+/// one would discard the first.
+pub(super) fn planned_content(path: &Path, rewrites: &[TextRewrite]) -> Option<String> {
     rewrites
         .iter()
         .rev()
         .find(|rewrite| rewrite.path == path)
-        .map(|rewrite| Ok(rewrite.content.clone()))
-        .unwrap_or_else(|| fs::read_to_string(path))
+        .map(|rewrite| rewrite.content.clone())
+}
+
+pub(super) fn rewrite_content_or_read(
+    path: &Path,
+    rewrites: &[TextRewrite],
+) -> Result<String, io::Error> {
+    match planned_content(path, rewrites) {
+        Some(content) => Ok(content),
+        None => fs::read_to_string(path),
+    }
 }

@@ -20,7 +20,11 @@ import {
   withIdentityFields,
 } from "./vaultGitBehavior";
 
-vi.mock("../../api/api", () => ({ apiFetch: vi.fn() }));
+vi.mock("../../api/api", () => ({
+  apiFetch: vi.fn(),
+  // The Vault collection client opens the shared revision stream through this.
+  withAccessToken: (url: string) => url,
+}));
 const mockedApiFetch = vi.mocked(apiFetch);
 
 const VAULT_ID = "00000000-0000-4000-8000-000000000001";
@@ -32,6 +36,9 @@ const json = (body: unknown) =>
   });
 
 function baseVault(source: unknown, overrides: Record<string, unknown> = {}) {
+  // Mirrors `collection_capabilities` in `src/vault_runtime.rs`: both flags
+  // come from the Vault's Git mode, not from its current status.
+  const mode = (source as { mode?: string } | undefined)?.mode;
   return {
     vault_id: VAULT_ID,
     name: "Field notes",
@@ -52,6 +59,8 @@ function baseVault(source: unknown, overrides: Record<string, unknown> = {}) {
       pull: false,
       push: false,
       retry: false,
+      commit: mode === "local_history" || mode === "two_way",
+      sync: mode === "pull_only" || mode === "two_way",
     },
     ...overrides,
   };
@@ -770,6 +779,41 @@ describe("VaultSettingsDetail — sync console", () => {
     expect(screen.getByRole("button", { name: "Sync now" })).toBeVisible();
   });
 
+  it("offers Commit now, and no talk of a remote, for a Local history Vault", async () => {
+    // The console used to render for any Git-backed Vault as though every one
+    // of them synced, so a Vault with no remote was told its "Git sync is
+    // healthy" and offered a Sync now the backend could only refuse (#267).
+    mockDetail(
+      baseVault(
+        {
+          type: "existing_git",
+          repository_path: "/vaults/field-notes",
+          mode: "local_history",
+          poll_interval_secs: 3600,
+        },
+        { git: "ready" },
+      ),
+    );
+    render(
+      <VaultSettingsDetail
+        vaultId={VAULT_ID}
+        serverIdentity={SERVER_IDENTITY}
+        onDisconnect={() => {}}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Field notes" });
+    expect(screen.getByRole("button", { name: "Commit now" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Sync now" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("This Vault's Git history is up to date."),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("This Vault's Git sync is healthy."),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows the matching sentence, file list and Try again button for a failing Vault", async () => {
     mockDetail(
       baseVault(
@@ -863,6 +907,141 @@ describe("VaultSettingsDetail — sync console", () => {
     );
     await screen.findByRole("heading", { name: "Field notes" });
     expect(screen.queryByText("Healthy")).not.toBeInTheDocument();
+  });
+});
+
+describe("VaultSettingsDetail — following the collection (#198)", () => {
+  it("adopts another writer's change to the same Vault rather than describing a stale one", async () => {
+    let git = "ready";
+    mockRoutes({
+      "/api/v1/vaults": () =>
+        json({
+          registry_revision: 3,
+          collection_revision: 3,
+          vaults: [
+            baseVault(
+              {
+                type: "managed_git",
+                repository_url: "https://example.test/notes.git",
+                branch: "main",
+                mode: "two_way",
+                poll_interval_secs: 3600,
+              },
+              {
+                git,
+                ...(git === "unavailable"
+                  ? {
+                      git_error: {
+                        code: "managed_git_auth",
+                        message: "The remote refused the stored sign-in.",
+                        retryable: true,
+                      },
+                    }
+                  : {}),
+              },
+            ),
+          ],
+          demo_mode: false,
+        }),
+      "/api/v1/vaults/all/stats": () =>
+        json({ data: [{ vault_id: VAULT_ID, note_count: 12 }] }),
+      [`/api/v1/vaults/${VAULT_ID}/recent?limit=1`]: () =>
+        json({ data: [{ mtime_ns: 0 }] }),
+    });
+
+    render(
+      <VaultSettingsDetail
+        vaultId={VAULT_ID}
+        serverIdentity={SERVER_IDENTITY}
+        onDisconnect={() => {}}
+      />,
+    );
+    await screen.findByRole("button", { name: "Sync now" });
+
+    git = "unavailable";
+    for (const source of window.__hatchdoorEventSources) {
+      source.emit(
+        "vault-collection-revision",
+        JSON.stringify({ collection_revision: 9 }),
+      );
+    }
+
+    expect(
+      await screen.findByRole("button", { name: "Try again" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Sync now" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still adopts a change that arrived while its own round trip was in flight", async () => {
+    markRecoveryPending(VAULT_ID);
+    let name = "Field notes";
+    let resolveEnable: ((value: Response) => void) | null = null;
+    mockRoutes({
+      "/api/v1/vaults": () =>
+        json({
+          registry_revision: 3,
+          collection_revision: 3,
+          vaults: [
+            baseVault(
+              { type: "local", path: "/notes" },
+              { enabled: false, name },
+            ),
+          ],
+          demo_mode: false,
+        }),
+      "/api/v1/vaults/all/stats": () =>
+        json({ data: [{ vault_id: VAULT_ID, note_count: 12 }] }),
+      [`/api/v1/vaults/${VAULT_ID}/recent?limit=1`]: () =>
+        json({ data: [{ mtime_ns: 0 }] }),
+      [`/api/v1/vaults/${VAULT_ID}/enable POST`]: () =>
+        new Promise<Response>((resolve) => {
+          resolveEnable = resolve;
+        }),
+    });
+
+    render(
+      <VaultSettingsDetail
+        vaultId={VAULT_ID}
+        serverIdentity={SERVER_IDENTITY}
+        onDisconnect={() => {}}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Field notes" });
+
+    // The recovery round trip sets `busy`, and the page deliberately shows its
+    // own in-flight state while it runs.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Try to bring this Vault back" }),
+    );
+    await vi.waitFor(() => expect(resolveEnable).not.toBeNull());
+
+    // Someone else renames the Vault mid-round-trip. The record must not be
+    // silently consumed: the collection keeps a Vault's identity across a
+    // refresh that finds nothing new, so a record dropped here would never be
+    // offered again and this page would describe a Vault the index disagrees
+    // with for the rest of the visit.
+    name = "Renamed elsewhere";
+    for (const source of window.__hatchdoorEventSources) {
+      source.emit(
+        "vault-collection-revision",
+        JSON.stringify({ collection_revision: 9 }),
+      );
+    }
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Field notes" }),
+      ).toBeVisible(),
+    );
+
+    // The round trip answers without a record of its own, so nothing competes
+    // with the collection for the last word.
+    resolveEnable!(json({ registry_revision: 4, collection_revision: 4 }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Renamed elsewhere" }),
+    ).toBeVisible();
   });
 });
 

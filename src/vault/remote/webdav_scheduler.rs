@@ -93,9 +93,10 @@ impl WebDavScheduler {
     }
 
     /// Fire a WebDAV turn for every Vault whose schedule is due. Idempotent
-    /// per Vault: a Vault with an already-active (or queued) WebDAV turn is
-    /// skipped, so a turn that outlasts a tick can never pre-queue a
-    /// zero-delay rerun that defeats `record_outcome`'s re-arm.
+    /// per Vault: [`VaultWorkCoordinator::request_if_idle`] skips a Vault with
+    /// an already-active (or queued) WebDAV turn, so a turn that outlasts a
+    /// tick can never pre-queue a zero-delay rerun that defeats
+    /// `record_outcome`'s re-arm.
     pub fn tick(&self, now: Instant) {
         let due = {
             let entries = self.entries.lock().expect("WebDAV scheduler poisoned");
@@ -106,10 +107,8 @@ impl WebDavScheduler {
                 .collect::<Vec<_>>()
         };
         for vault_id in due {
-            if self.coordinator.has_work(vault_id, VaultWorkKind::WebDav) {
-                continue;
-            }
-            self.coordinator.request(vault_id, VaultWorkKind::WebDav);
+            self.coordinator
+                .request_if_idle(vault_id, VaultWorkKind::WebDav);
         }
     }
 

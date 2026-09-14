@@ -1,11 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cache::parse::content_hash;
+use crate::cache::parse::{content_hash, parse_fence_marker};
 use crate::vault::paths::{slugify, strip_md_extension};
 use crate::vault::types::{NoteEntry, VaultIndex};
 
 use super::assets::asset_move_plan;
+use super::frontmatter::{FrontmatterEdit, edit_frontmatter_block};
 use super::fs_ops::{
     MutationJournal, atomic_write, atomic_write_if_unchanged, ensure_content_hash,
 };
@@ -13,8 +14,9 @@ use super::paths::{
     create_parent_dir_inside_root, normalize_note_relative_path, resolve_new_note_path,
     unique_trash_relative_path,
 };
-use super::rewrites::{backlink_rewrite_plan, merge_rewrites, parse_fence_marker};
+use super::rewrites::{MovedTo, backlink_rewrite_plan, merge_rewrites};
 use super::types::{AssetMove, MutationPhase, TextRewrite, WriteError, WriteOutcome};
+use crate::cache::parse::frontmatter_span;
 
 /// Where `replace_section` places the supplied content relative to the matched section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +215,104 @@ pub fn update_note(
         relative_path: Some(entry.relative_path.clone()),
         content_hash: Some(content_hash(&prepared.content)),
         quality_warnings: prepared.warnings,
+        rewritten_notes: 0,
+        moved_assets: 0,
+        trashed_path: None,
+        affected_paths: vec![entry.path.clone()],
+    })
+}
+
+/// Shallow top-level YAML merge into one note's frontmatter: every key in
+/// `updates` replaces (or creates) its top-level frontmatter value wholesale —
+/// nested mappings are not merged recursively — while keys `updates` does not
+/// mention survive untouched. A `null` value deletes the key. A note with no
+/// block gets one created, and deleting a note's last frontmatter key removes
+/// the now-empty block entirely.
+///
+/// The block is edited in place rather than regenerated (ADR-22): every byte
+/// that does not belong to a named key comes back exactly as the author wrote
+/// it — key order, one-line versus multi-line lists, indentation, quoting,
+/// comments, and blank lines — and so does the Markdown body outside the
+/// block. See `write/frontmatter.rs` for the editing rules and the two
+/// refusals they add. Reuses the canonical cache-layer frontmatter parsing
+/// (`cache/parse.rs`) so reads and writes agree on what the block is.
+pub fn update_note_frontmatter(
+    entry: &NoteEntry,
+    updates: serde_json::Map<String, serde_json::Value>,
+    expected_content_hash: &str,
+) -> Result<WriteOutcome, WriteError> {
+    if updates.is_empty() {
+        return Err(WriteError::InvalidInput(
+            "update_frontmatter needs at least one top-level key".to_string(),
+        ));
+    }
+    ensure_content_hash(entry, expected_content_hash)?;
+    let content = read_note(entry)?;
+    let span = frontmatter_span(&content);
+    let had_frontmatter = span.is_some();
+    // Surface the same frontmatter quality contract as the sibling note
+    // primitives: a block can carry a duplicate key that every YAML reader
+    // collapses (last one wins), so that loss is reported as a warning rather
+    // than dropped silently. Naming the duplicated key is refused outright;
+    // this warning is what a caller editing some *other* key still learns.
+    let warnings = frontmatter_warnings(&content);
+    let block = &content[span.map(|(start, end)| start..end).unwrap_or(0..0)];
+    let edited = edit_frontmatter_block(block, &updates, &entry.relative_path)?;
+
+    let updated = match edited {
+        FrontmatterEdit::Empty => {
+            if !had_frontmatter {
+                return Err(WriteError::InvalidInput(
+                    "update_frontmatter cannot create an empty frontmatter block; only null values were supplied".to_string(),
+                ));
+            }
+            // Every key was deleted: strip the whole block instead of leaving
+            // an empty `---\n---` pair behind. `end + 4` steps over the closing
+            // "\n---", and the rest of the line it sits on goes with it: any
+            // trailing spaces, then the newline that ends it. That newline
+            // terminates the marker rather than opening the body, and leaving
+            // it behind gave every stripped note a blank first line. A file
+            // whose closing marker is its last bytes has no line ending to
+            // drop, and a CRLF file has two bytes of it rather than one.
+            let body_start = span.map_or(0, |(_, end)| {
+                let rest = &content[end + 4..];
+                let spaces = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+                let line_ending = match &rest[spaces..] {
+                    rest if rest.starts_with("\r\n") => 2,
+                    rest if rest.starts_with('\n') => 1,
+                    _ => 0,
+                };
+                end + 4 + spaces + line_ending
+            });
+            content[body_start..].to_string()
+        }
+        // Rewrite exactly the inner region so the opening/closing markers and
+        // everything after them keep their original bytes. The edited block
+        // carries no trailing newline, matching the span's own convention.
+        FrontmatterEdit::Block(edited) => match span {
+            Some((start, end)) => {
+                format!("{}{}{}", &content[..start], edited, &content[end..])
+            }
+            // A note with no block yet gives the editor no line ending to copy,
+            // so the note's own is applied here. Without it, creating a block
+            // on a CRLF note leaves the file with mixed endings, which is the
+            // thing the editor's own line-ending handling exists to avoid.
+            None => match content.contains("\r\n") {
+                true => {
+                    let edited = edited.replace('\n', "\r\n");
+                    format!("---\r\n{edited}\r\n---\r\n{content}")
+                }
+                false => format!("---\n{edited}\n---\n{content}"),
+            },
+        },
+    };
+
+    atomic_write_if_unchanged(&entry.path, &updated, expected_content_hash)?;
+    Ok(WriteOutcome {
+        slug: Some(entry.slug.clone()),
+        relative_path: Some(entry.relative_path.clone()),
+        content_hash: Some(content_hash(&updated)),
+        quality_warnings: warnings,
         rewritten_notes: 0,
         moved_assets: 0,
         trashed_path: None,
@@ -460,12 +560,17 @@ fn move_or_rename_note_with_hook(
             normalize_note_relative_path(target_relative_path)?
         )));
     }
-    create_parent_dir_inside_root(vault_root, &target_path, "destination")?;
-
     let target_without_ext =
         strip_md_extension(&normalize_note_relative_path(target_relative_path)?).to_string();
     let slug = slug_for_relative_path(index, &target_without_ext, &target_path, Some(&entry.slug));
-    let backlink_rewrites = backlink_rewrite_plan(index, &entry.slug, Some(&target_without_ext))?;
+    let backlink_rewrites = backlink_rewrite_plan(
+        index,
+        &entry.slug,
+        Some(MovedTo {
+            new_target: &target_without_ext,
+            destination: target_path.as_path(),
+        }),
+    )?;
     let (asset_moves, asset_rewrites) = asset_move_plan(
         vault_root,
         index,
@@ -474,6 +579,11 @@ fn move_or_rename_note_with_hook(
         false,
         &backlink_rewrites,
     )?;
+    // Created after planning, so a plan the planner refuses outright leaves no
+    // empty destination folder behind. A plan that carries assets still creates
+    // folders while planning them; the pre-existing empty-folder-after-rollback
+    // case is unchanged and tracked separately.
+    create_parent_dir_inside_root(vault_root, &target_path, "destination")?;
     let mutation = execute_note_mutation(
         vault_root,
         entry,
@@ -484,12 +594,17 @@ fn move_or_rename_note_with_hook(
         &mut after_phase,
     )?;
     let moved_assets = asset_moves.len();
-    let rewritten = mutation.rewritten;
-    let rewritten_notes = rewritten.len();
-
-    let mut affected_paths = rewritten;
+    // The moved note's own self-link rewrite lands on its destination path,
+    // which this operation already reports as its subject. `rewritten_notes`
+    // counts the *other* notes, so counting it would report the same write
+    // twice, and `affected_paths` would name the destination twice (#254).
+    let mut affected_paths = mutation.rewritten;
+    let rewrote_its_own_body = affected_paths.contains(&target_path);
+    let rewritten_notes = affected_paths.len() - usize::from(rewrote_its_own_body);
     affected_paths.push(entry.path.clone());
-    affected_paths.push(target_path.clone());
+    if !rewrote_its_own_body {
+        affected_paths.push(target_path.clone());
+    }
     for asset in &asset_moves {
         affected_paths.push(asset.source.clone());
         affected_paths.push(asset.destination.clone());
@@ -576,8 +691,10 @@ fn delete_note_with_hook(
     ensure_content_hash(entry, expected_content_hash)?;
     let trash_relative = unique_trash_relative_path(vault_root, &entry.relative_path)?;
     let trash_path = vault_root.join(format!("{trash_relative}.md"));
-    create_parent_dir_inside_root(vault_root, &trash_path, "trash")?;
 
+    // No destination: the link is removed from every other note, and the
+    // trashed body's link to itself is left as written, since the note is gone
+    // from the Vault and the link is moot in the trash (#254).
     let backlink_rewrites = backlink_rewrite_plan(index, &entry.slug, None)?;
     let (asset_moves, asset_rewrites) = asset_move_plan(
         vault_root,
@@ -587,6 +704,7 @@ fn delete_note_with_hook(
         true,
         &backlink_rewrites,
     )?;
+    create_parent_dir_inside_root(vault_root, &trash_path, "trash")?;
     let mutation = execute_note_mutation(
         vault_root,
         entry,

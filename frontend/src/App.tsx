@@ -12,6 +12,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useMatch,
   useNavigate,
 } from "react-router-dom";
 
@@ -36,8 +37,11 @@ import {
   getStoredRecentNotes,
   clearStoredLastNote,
   getStoredLastNote,
+  getStoredLastNoteForVault,
   getStoredExpandedFolders,
   isEditableTarget,
+  pruneStoredLastNotesByVault,
+  rememberLastNoteForVault,
 } from "./lib/storage";
 import { useIsMobile } from "./hooks/useIsMobile";
 import { useTheme } from "./hooks/useTheme";
@@ -53,13 +57,9 @@ import { StateBlock } from "./components/ui";
 import { StartWithNoVaultsDialog } from "./components/StartWithNoVaultsDialog";
 import { useNoteActions } from "./hooks/useNoteActions";
 import { useVaultTree } from "./hooks/useVaultTree";
-import {
-  resolvePrimaryVaultId,
-  useVaultDiscovery,
-  useVaultNoteCounts,
-  useVaultScope,
-} from "./hooks/useVaultScope";
-import { describeScopeSlot, scopeName } from "./app/vaultSlotLogic";
+import { resolvePrimaryVaultId, useVaultScope } from "./hooks/useVaultScope";
+import { useVaultCollection, useVaultProjection } from "./vaults";
+import { scopeName } from "./app/vaultSlotLogic";
 import { useWriteMode } from "./hooks/useWriteMode";
 import { pruneNoteDrafts } from "./lib/writeDrafts";
 import { isDemoReadOnlyError } from "./api/writeApi";
@@ -74,11 +74,9 @@ import { SearchDialog, useSearch } from "./features/search";
 function VaultWorkspace({
   startupStatus,
   onRetryModelSetup,
-  discovery,
 }: {
   startupStatus: StartupStatus | null;
   onRetryModelSetup: () => void;
-  discovery: ReturnType<typeof useVaultDiscovery>;
 }) {
   const [drawerOpen, setDrawerOpen] = useState<boolean>(() => {
     return window.localStorage.getItem(DRAWER_OPEN_KEY) === "1";
@@ -104,6 +102,10 @@ function VaultWorkspace({
   const [editRequestId, setEditRequestId] = useState(0);
   const location = useLocation();
   const navigate = useNavigate();
+  // The one route that shows a note, and so the one state a scope switch is
+  // allowed to navigate out of. Matched by the router itself rather than by a
+  // second spelling of the path.
+  const onNoteRoute = useMatch("/v/:vaultId/n/:slug") !== null;
   const isMobile = useIsMobile(920);
   const { theme, cycleTheme } = useTheme();
 
@@ -114,8 +116,10 @@ function VaultWorkspace({
     loading: vaultsLoading,
     recovery: registryRecovery,
     legacyMigrationRecovery,
-    loadVaults,
-  } = discovery;
+    noteCounts: vaultNoteCounts,
+    refresh: loadVaults,
+  } = useVaultCollection();
+  const vaultProjection = useVaultProjection();
   const hasRegistryRecovery = Boolean(
     registryRecovery || legacyMigrationRecovery,
   );
@@ -135,11 +139,6 @@ function VaultWorkspace({
     loadTree,
     loadModifiedNotes,
   } = useVaultTree(scope);
-  // Gated on the zone rendering at all, not on more than one Vault: #150's
-  // startup slot keeps the Scope zone on screen at a single Vault too, and
-  // that zone's rows read note counts. Gating at `> 1` left the single-Vault
-  // case with no counts fetched, which the slot rendered as a bare "0".
-  const vaultNoteCounts = useVaultNoteCounts(vaults.length > 0, vaultRevision);
   // Every enabled Vault, whatever the browsing scope: a note can be created in
   // a Vault that is not currently being browsed, and the picker says so.
   const dialogVaults = useMemo(
@@ -204,7 +203,7 @@ function VaultWorkspace({
     searchError,
     searchInputRef,
     openSearchForTag,
-  } = useSearch(scope);
+  } = useSearch();
   const {
     noteActionDialog,
     noteActionError,
@@ -392,6 +391,9 @@ function VaultWorkspace({
       LAST_NOTE_KEY,
       JSON.stringify({ vaultId: activeNote.vaultId, slug: activeNote.slug }),
     );
+    // The same note again, filed under its own Vault: the landing redirect
+    // above needs one note, a scope switch needs one per Vault.
+    rememberLastNoteForVault(activeNote.vaultId, activeNote.slug);
   }, [activeNote]);
 
   useEffect(() => {
@@ -424,6 +426,55 @@ function VaultWorkspace({
       { replace: true },
     );
   }, [location.pathname, navigate, vaults, vaultsLoading]);
+
+  useEffect(() => {
+    // A departed Vault's remembered note is unusable for the same reason the
+    // landing restore forgets one: the note route answers "Vault definition
+    // was not found". Dropping it here also keeps the map from holding an
+    // entry per Vault ever connected. An empty browsing list is never
+    // evidence of that — a broken registry and a paused-everything
+    // collection both produce one — so it forgets nothing at all rather than
+    // everything.
+    if (vaultsLoading || hasRegistryRecovery || vaults.length === 0) {
+      return;
+    }
+    pruneStoredLastNotesByVault(vaults.map((vault) => vault.vault_id));
+  }, [hasRegistryRecovery, vaults, vaultsLoading]);
+
+  // Narrowing the browsing scope to one Vault carries the reader with it: the
+  // note that Vault was last left on comes back, the same restore the landing
+  // redirect does on a fresh load, and a Vault with nothing remembered lands
+  // on the empty state rather than leaving the previous Vault's note on
+  // screen. Only from a note page — a scope pick made in Settings, on the
+  // Graph or in Statistics is a filter, not a request to go and read
+  // something. Widening back to `all` moves nobody: it adds Vaults to what is
+  // listed, it does not choose one.
+  const handleScopeChange = useCallback(
+    (next: VaultScope) => {
+      setScope(next);
+      if (
+        next === scope ||
+        next === "all" ||
+        activeNote?.vaultId === next ||
+        !onNoteRoute
+      ) {
+        return;
+      }
+      const slug = getStoredLastNoteForVault(next);
+      if (!slug) {
+        // Nothing is open any more, so nothing should be restored: forgetting
+        // the landing note keeps the empty state on screen both now (the
+        // landing redirect finds nothing to put back) and after a reload,
+        // which would otherwise return the note of the Vault just left while
+        // the selector still reads the new one.
+        clearStoredLastNote();
+        navigate("/");
+        return;
+      }
+      navigate(`/v/${encodeURIComponent(next)}/n/${encodeURIComponent(slug)}`);
+    },
+    [activeNote?.vaultId, navigate, onNoteRoute, scope, setScope],
+  );
 
   const handleScopeZoneCollapsedChange = useCallback((next: boolean) => {
     setScopeZoneCollapsed(next);
@@ -530,12 +581,7 @@ function VaultWorkspace({
   // the instant a pick lands, then its count-or-condition in the same
   // breath if already known, or as a short second sentence once it resolves
   // — never a value that is not yet known.
-  const scopeSlotDescription = describeScopeSlot(
-    scope,
-    vaults,
-    vaultNoteCounts,
-    demoMode,
-  );
+  const scopeSlotDescription = vaultProjection.describeScope(scope);
 
   useEffect(() => {
     // Discovery still in flight means `vaults` is a temporary `[]`, not a
@@ -697,7 +743,7 @@ function VaultWorkspace({
         onArchiveNote={() => openActionDialog("archive")}
         onDeleteNote={() => openActionDialog("delete")}
         onCycleTheme={cycleTheme}
-        onScopeChange={setScope}
+        onScopeChange={handleScopeChange}
         viewingVaultId={activeNote?.vaultId}
         vaultNoteCounts={vaultNoteCounts}
         scopeSheetOpen={scopeSheetOpen}
@@ -773,7 +819,7 @@ function VaultWorkspace({
           }}
           vaults={vaults}
           scope={scope}
-          onScopeChange={setScope}
+          onScopeChange={handleScopeChange}
           viewingVaultId={activeNote?.vaultId}
           vaultNoteCounts={vaultNoteCounts}
           scopeZoneCollapsed={scopeZoneCollapsed}
@@ -924,7 +970,6 @@ function VaultWorkspace({
                 ) : (
                   <SettingsPage
                     vaults={vaults}
-                    onVaultDiscoveryRefresh={loadVaults}
                     onRestoreCreateDraft={(
                       targetVaultId,
                       folder,
@@ -1046,10 +1091,10 @@ function VaultWorkspace({
   );
 }
 
-/** The test-facing workspace composition still owns discovery when it is
- * mounted directly. The production `App` lifts discovery above `StartupGate`
- * so a broken registry is known before that gate can decide to lock the
- * workspace (#150). */
+/** The workspace mounted on its own, without the startup gate above it. The
+ * gate needs the same collection state to decide whether a broken registry
+ * should stop it locking the workspace (#150); both read it from the one
+ * collection client (#198), so neither has to hand it to the other. */
 export function VaultApp({
   startupStatus,
   onRetryModelSetup,
@@ -1057,12 +1102,10 @@ export function VaultApp({
   startupStatus: StartupStatus | null;
   onRetryModelSetup: () => void;
 }) {
-  const discovery = useVaultDiscovery();
   return (
     <VaultWorkspace
       startupStatus={startupStatus}
       onRetryModelSetup={onRetryModelSetup}
-      discovery={discovery}
     />
   );
 }
@@ -1108,21 +1151,21 @@ function formatEtaSeconds(seconds: number | undefined): string | null {
 
 export function App() {
   const [authRequired, setAuthRequired] = useState(false);
-  const discovery = useVaultDiscovery();
+  const collection = useVaultCollection();
   const hasRegistryRecovery = Boolean(
-    discovery.recovery || discovery.legacyMigrationRecovery,
+    collection.recovery || collection.legacyMigrationRecovery,
   );
   const hasNoVaults =
-    !discovery.loading &&
-    !discovery.error &&
+    !collection.loading &&
+    !collection.error &&
     !hasRegistryRecovery &&
-    discovery.vaults.length === 0;
+    collection.vaults.length === 0;
   // The startup route is neither useful nor permitted to poll while the
   // workspace is a zero-Vault or broken-registry recovery surface (#150).
-  // Resolve discovery first so either condition can win before a model step
-  // ever has a chance to gate the page.
+  // Resolve the collection first so either condition can win before a model
+  // step ever has a chance to gate the page.
   const startup = useStartupStatus(
-    !discovery.loading && !hasRegistryRecovery && !hasNoVaults,
+    !collection.loading && !hasRegistryRecovery && !hasNoVaults,
   );
 
   useEffect(() => {
@@ -1145,7 +1188,7 @@ export function App() {
         status={startup.status}
         connectionIssue={startup.connectionIssue}
         hasSteppedPastGate={startup.hasSteppedPastGate}
-        discoveryLoading={discovery.loading}
+        discoveryLoading={collection.loading}
         hasRegistryRecovery={hasRegistryRecovery}
         hasNoVaults={hasNoVaults}
         onAcceptGemma={() => void startup.acceptGemma()}
@@ -1154,7 +1197,6 @@ export function App() {
         <VaultWorkspace
           startupStatus={startup.status}
           onRetryModelSetup={() => void startup.retryModelSetup()}
-          discovery={discovery}
         />
       </StartupGate>
     </>

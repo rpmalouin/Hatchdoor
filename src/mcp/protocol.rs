@@ -1,21 +1,14 @@
+//! Shared MCP result/error vocabulary. JSON-RPC framing itself is rmcp-owned
+//! (ADR-17); what remains here are the tool-result shapes the dispatcher and
+//! the typed adapter share, plus the bounded HTTP error bodies our transport
+//! middleware returns before any rmcp framing exists (auth failures, request
+//! size limits).
+
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::Write;
-
-/// MCP replies are JSON, not a bulk-transfer channel. Keep a hard ceiling so a
-/// broad tree/query result cannot allocate an unbounded serialized response.
-pub const MAX_JSONRPC_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
-
-#[derive(Debug, Deserialize)]
-pub struct JsonRpcRequest {
-    pub jsonrpc: Option<String>,
-    pub id: Option<Value>,
-    pub method: String,
-    pub params: Option<Value>,
-}
 
 #[derive(Debug)]
 pub struct JsonRpcFailure {
@@ -28,6 +21,10 @@ pub struct JsonRpcFailure {
 }
 
 impl JsonRpcFailure {
+    /// The code whose dispatcher-level rendering masks diagnostics behind the
+    /// stable `Internal server error` message.
+    pub const INTERNAL_ERROR_CODE: i64 = -32603;
+
     pub fn invalid_params(message: impl Into<String>) -> Self {
         Self {
             code: -32602,
@@ -63,17 +60,9 @@ impl JsonRpcFailure {
     }
 }
 
-pub fn jsonrpc_success_response(id: Value, result: Value) -> Response {
-    jsonrpc_response(
-        StatusCode::OK,
-        json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result,
-        }),
-    )
-}
-
+/// A plain-JSON HTTP error response with a JSON-RPC-shaped body. Used only by
+/// the authorization/limit middleware for pre-framing rejections; everything
+/// past that gate is framed by rmcp.
 pub fn jsonrpc_error_response(
     status: StatusCode,
     id: Value,
@@ -123,7 +112,7 @@ fn bounded_json_bytes(payload: &Value) -> Result<Vec<u8>, serde_json::Error> {
     Ok(writer.into_inner())
 }
 
-struct LimitedJsonWriter {
+pub(crate) struct LimitedJsonWriter {
     bytes: Vec<u8>,
     maximum: usize,
 }
@@ -160,16 +149,7 @@ impl Write for LimitedJsonWriter {
     }
 }
 
-/// The `notifications/tools/list_changed` JSON-RPC notification (no `id`), sent
-/// to tell a client its cached tool list is stale and it should re-`tools/list`.
-/// Built here so the shape is defined once; a streaming MCP transport writes it
-/// to the client when `AppState::mcp_tools_changed` fires.
-pub fn tools_list_changed_notification() -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/tools/list_changed",
-    })
-}
+pub const MAX_JSONRPC_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn tool_success(payload: Value) -> Value {
     let text = match bounded_json_bytes(&payload) {
@@ -202,10 +182,38 @@ pub fn tool_error(message: String) -> Value {
     })
 }
 
+/// The field that states a tool payload's outcome: `false` on the structured
+/// errors [`tool_structured_error`] builds, `true` on the write receipts
+/// `results.rs` serialises. Read payloads carry it on neither, so the rule for
+/// a caller is that the field present and false means the call was refused.
+///
+/// It exists because a client reading `structuredContent` as the tool's typed
+/// answer never sees the enclosing `isError`. Every tool advertises an
+/// `outputSchema` built from its success type, which invites exactly that
+/// reading, and on failure the payload silently became a different shape with
+/// no field in common with the advertised one (#255).
+pub const OUTCOME_FIELD: &str = "ok";
+
 /// A domain failure returned by a tool.  Unlike a JSON-RPC invalid-params
 /// error, this preserves the shared Vault API's stable error object so agents
 /// can branch on `code` rather than matching human text.
-pub fn tool_structured_error(payload: Value) -> Value {
+///
+/// The payload also carries [`OUTCOME_FIELD`] set to `false`, alongside the
+/// error object's own `code`, `message`, `retryable`, and any `vault_id`. This
+/// is the single construction point for the shape, so no individual tool has to
+/// remember to set it, and the field goes in before the text rendering so the
+/// two halves of the result cannot disagree. It is deliberately added here
+/// rather than on the shared Vault error type itself: that type also serialises
+/// into HTTP bodies and into `batch` item `error` values, neither of which
+/// changes shape.
+///
+/// A payload that is not a JSON object keeps whatever it already was, and a
+/// tool error carrying only a plain-text message ([`tool_error`]) has no
+/// structured payload to mark at all.
+pub fn tool_structured_error(mut payload: Value) -> Value {
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(OUTCOME_FIELD.to_string(), json!(false));
+    }
     let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
     json!({
         "content": [{ "type": "text", "text": text }],
@@ -219,23 +227,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tools_list_changed_notification_is_an_idless_jsonrpc_notification() {
-        let notification = tools_list_changed_notification();
-        assert_eq!(notification["jsonrpc"], "2.0");
-        assert_eq!(notification["method"], "notifications/tools/list_changed");
-        // A notification carries no id (it expects no response) and no params.
-        assert!(notification.get("id").is_none());
-        assert!(notification.get("params").is_none());
+    fn a_structured_error_marks_itself_as_a_failure_in_both_renderings() {
+        let result = tool_structured_error(json!({
+            "code": "write_conflict",
+            "message": "note changed since it was read",
+            "retryable": true,
+        }));
+
+        assert_eq!(result["isError"], true);
+        let payload = &result["structuredContent"];
+        assert_eq!(payload[OUTCOME_FIELD], false);
+        // The error object's own fields survive untouched: an agent still
+        // branches on `code` rather than on human text.
+        assert_eq!(payload["code"], "write_conflict");
+        assert_eq!(payload["retryable"], true);
+
+        let text: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().expect("text"))
+                .expect("the text content is a serialisation of the payload");
+        assert_eq!(&text, payload);
     }
 
     #[test]
-    fn oversized_success_response_is_replaced_with_a_bounded_error() {
-        let response = jsonrpc_success_response(
-            Value::from(1),
-            json!({
-                "payload": "x".repeat(MAX_JSONRPC_RESPONSE_BYTES)
-            }),
+    fn a_payload_that_is_not_an_object_is_left_alone() {
+        let result = tool_structured_error(json!("just a string"));
+        assert_eq!(result["structuredContent"], json!("just a string"));
+        assert_eq!(result["isError"], true);
+    }
+
+    #[test]
+    fn a_success_payload_gains_nothing() {
+        let result = tool_success(json!({"ok": true, "slug": "home"}));
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            result["structuredContent"],
+            json!({"ok": true, "slug": "home"})
         );
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

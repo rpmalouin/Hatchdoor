@@ -25,9 +25,9 @@ Everything on this roadmap should advance at least one of these:
    attributable, and reversible; mistakes are contained.
 3. **Always available and easy to self-host.** The app starts and stays usable
    even while background work runs or optional capabilities fail.
-4. **Grows without losing itself.** From single-user/single-vault today toward
-   many vaults and, eventually, many users — without compromising the objectives
-   above.
+4. **Grows without losing itself.** From the single-user instance it is today
+   toward many users and agents sharing one, without compromising the objectives
+   above. Many vaults per instance shipped in v2.5.0.
 
 ## Workstreams
 
@@ -86,7 +86,8 @@ _Horizon: unversioned ("at some point"). No implementation started._
 Direction: build a first-run onboarding flow, tracked as
 [#9](https://github.com/BattermanZ/Hatchdoor/issues/9).
 
-_Horizon: **v2.6.0**._
+_Horizon: unversioned ("at some point"); slipped past v2.6.0, which shipped
+without it. No implementation started._
 
 ### Vault lifecycle & multi-vault
 
@@ -116,7 +117,13 @@ removed; **Roots, Sampling, and Logging are deprecated**; server-initiated
 requests (elicitation, sampling) move to a request/retry pattern instead of
 being pushed mid-call. HTTP+SSE transport is now formally deprecated too.
 
-_Horizon: **v2.6.0**._
+_Horizon: **v2.6.0** — shipped. The boundary now runs on rmcp
+(ADR-17) and advertises exactly `2026-07-28` and `2025-11-25`: stateless
+discovery with per-request `_meta`, a single opt-in `subscriptions/listen`
+stream, typed results with an `outputSchema` on every tool, and per-tool quotas
+with concurrency caps and `429 Retry-After`. The catalogue then grew from 35 to
+40 tools (`get_frontmatter`, `update_frontmatter`, `get_attachment`, `batch`,
+and `refresh_vault` from #228), purely additively._
 
 ### User documentation, in-app and answerable by the agent
 
@@ -133,7 +140,12 @@ existing MCP interface**: the in-app agent adds the docs instance as an
 MCP-reachable source, so a user can ask a question ("how do I connect a Git
 vault?") and get an answer grounded in the docs without leaving the app.
 
-_Horizon: **v2.6.0**._
+_Horizon: partially shipped in **v2.6.0**. The end-user documentation exists as
+its own Hatchdoor Vault, served by a separate public instance, and the README
+links into it rather than duplicating it; the demo and documentation instances
+cross-link. The second half, making that instance queryable from inside the app
+through the existing MCP interface so the in-app agent can answer from the docs,
+is not started and remains unversioned._
 
 ### Multi-user, network-exposed deployment
 
@@ -150,9 +162,11 @@ rather than only self-hosted single-tenant. Authentication, accounts,
 authorization, isolation, and audit must be designed explicitly, since it means
 serving mutually untrusted users and agents on shared infrastructure.
 
-_Horizon: **v3** (long-term). Depends on the multi-vault work in
-[vault lifecycle & multi-vault](vault-lifecycle.md) existing first — you can't
-scope access to vaults that aren't yet independent, addressable entities._
+_Horizon: **v3** (long-term). The multi-vault prerequisite is met. v2.5.0 made
+vaults independent, addressable entities with per-vault MCP scoping (see
+[vault lifecycle & multi-vault](vault-lifecycle.md)), so there is something to
+scope access to. What remains is the half deferred on purpose: accounts,
+authentication, authorization, isolation, and audit._
 
 ## How to Use This Roadmap
 

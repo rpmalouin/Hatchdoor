@@ -111,7 +111,7 @@ pub fn parse_frontmatter_metadata(content: &str) -> Result<FrontmatterMetadata, 
         return Ok(FrontmatterMetadata::default());
     }
 
-    let value: serde_json::Value = serde_yaml::from_str(frontmatter)
+    let value: serde_json::Value = serde_yaml_ng::from_str(frontmatter)
         .map_err(|error| format!("invalid YAML frontmatter: {error}"))?;
     let mut properties = match value {
         serde_json::Value::Null => serde_json::Map::new(),
@@ -159,23 +159,26 @@ fn string_values(value: serde_json::Value) -> Vec<String> {
 }
 
 fn split_frontmatter(content: &str) -> (&str, &str) {
+    match frontmatter_span(content) {
+        Some((start, end)) => (&content[start..end], content.get(end + 4..).unwrap_or("")),
+        None => ("", content),
+    }
+}
+
+/// Byte range `[start, end)` of one leading frontmatter block's *inner* text
+/// (between `---\n` and the next `\n---`), or `None` when the content has no
+/// frontmatter block. The shared write layer uses the same span so its
+/// frontmatter merge rewrites exactly this region and leaves every other
+/// byte of the note untouched.
+pub(crate) fn frontmatter_span(content: &str) -> Option<(usize, usize)> {
     let lines: Vec<&str> = content.splitn(3, '\n').collect();
     if lines.len() < 2 || lines[0].trim() != "---" {
-        return ("", content);
+        return None;
     }
-    let rest = &content[lines[0].len() + 1..];
-    if let Some(end) = rest.find("\n---") {
-        let fm_end = lines[0].len() + 1 + end;
-        let body_start = fm_end + 4; // skip "\n---"
-        let body = if body_start < content.len() {
-            &content[body_start..]
-        } else {
-            ""
-        };
-        (&content[lines[0].len() + 1..fm_end], body)
-    } else {
-        ("", content)
-    }
+    let start = lines[0].len() + 1; // skip "---\n"
+    let rest = &content[start..];
+    let end = start + rest.find("\n---")?;
+    Some((start, end))
 }
 
 fn extract_frontmatter_tags(frontmatter: &str, tags: &mut HashSet<String>) {
@@ -207,37 +210,130 @@ fn extract_frontmatter_tags(frontmatter: &str, tags: &mut HashSet<String>) {
     }
 }
 
-fn push_tag(raw: &str, tags: &mut HashSet<String>) {
-    let cleaned: String = raw
-        .chars()
+/// The leading run of tag characters in `raw` — the text that actually gets
+/// stored as a tag. Everything from the first character outside the tag
+/// charset onwards is dropped.
+fn tag_candidate(raw: &str) -> String {
+    raw.chars()
         .take_while(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '/'))
-        .collect();
+        .collect()
+}
+
+fn push_tag(raw: &str, tags: &mut HashSet<String>) {
+    let cleaned = tag_candidate(raw);
     if !cleaned.is_empty() {
         tags.insert(cleaned.to_lowercase());
     }
 }
 
 fn extract_inline_tags(body: &str, tags: &mut HashSet<String>) {
-    for token in body.split_whitespace() {
-        let token = token.trim_matches(|ch: char| {
-            matches!(
-                ch,
-                ',' | '.' | ';' | ':' | '!' | '?' | ')' | '(' | '[' | ']' | '{' | '}'
-            )
-        });
-        let Some(tag) = token.strip_prefix('#') else {
-            continue;
-        };
-        if tag.is_empty() || tag.starts_with('#') || tag.chars().all(|ch| ch == '-') {
+    for_non_code_line(body, |line| {
+        for token in line.split_whitespace() {
+            let token = token.trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    ',' | '.' | ';' | ':' | '!' | '?' | ')' | '(' | '[' | ']' | '{' | '}'
+                )
+            });
+            let Some(tag) = token.strip_prefix('#') else {
+                continue;
+            };
+            // The namespace check has to run against the candidate that will be
+            // stored, not the raw whitespace token. A citation written as
+            // `#1177](https://example.com/x/1177)` is one token whose slash comes
+            // from the URL, and truncation drops it again before the tag is
+            // inserted — so the two used to disagree and a bare number got
+            // indexed (issue #248).
+            let candidate = tag_candidate(tag);
+            // Inline tags must be namespaced (e.g. #area/health), not free-form words or bare numbers.
+            let slash = candidate.find('/');
+            if !slash.is_some_and(|pos| pos > 0 && pos < candidate.len() - 1) {
+                continue;
+            }
+            tags.insert(candidate.to_lowercase());
+        }
+    });
+}
+
+/// Visit every line of `content` that Markdown renders as prose: fenced code
+/// blocks are skipped whole and inline code spans are blanked out of the lines
+/// that survive.
+///
+/// Shared with the Vault link reader and the asset-reference rewriter so that
+/// what the index treats as prose and what a rewrite is willing to edit cannot
+/// drift apart.
+pub(crate) fn for_non_code_line<F>(content: &str, mut visit: F)
+where
+    F: FnMut(&str),
+{
+    let mut fenced_marker: Option<(u8, usize)> = None;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if let Some((marker, min_len)) = fenced_marker {
+            if let Some((close_marker, close_len)) = parse_fence_marker(trimmed)
+                && close_marker == marker
+                && close_len >= min_len
+            {
+                fenced_marker = None;
+            }
             continue;
         }
-        // Inline tags must be namespaced (e.g. #area/health), not free-form words or bare numbers.
-        let slash = tag.find('/');
-        if !slash.is_some_and(|pos| pos > 0 && pos < tag.len() - 1) {
+        if let Some(marker) = parse_fence_marker(trimmed) {
+            fenced_marker = Some(marker);
             continue;
         }
-        push_tag(tag, tags);
+        let no_inline_code = strip_inline_code_segments(line);
+        visit(&no_inline_code);
     }
+}
+
+/// `line` with every inline code span removed, backticks included.
+fn strip_inline_code_segments(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut idx = 0usize;
+    let mut inline_marker_len = 0usize;
+    while idx < chars.len() {
+        if chars[idx] == '`' {
+            let mut marker_len = 1usize;
+            while idx + marker_len < chars.len() && chars[idx + marker_len] == '`' {
+                marker_len += 1;
+            }
+            if inline_marker_len == 0 {
+                inline_marker_len = marker_len;
+            } else if marker_len == inline_marker_len {
+                inline_marker_len = 0;
+            }
+            idx += marker_len;
+            continue;
+        }
+        if inline_marker_len == 0 {
+            out.push(chars[idx]);
+        }
+        idx += 1;
+    }
+    out
+}
+
+/// The fence character and its run length when `trimmed_line` opens or closes a
+/// fenced code block, otherwise `None`.
+pub(crate) fn parse_fence_marker(trimmed_line: &str) -> Option<(u8, usize)> {
+    let bytes = trimmed_line.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let marker = bytes[0];
+    if marker != b'`' && marker != b'~' {
+        return None;
+    }
+
+    let mut len = 1usize;
+    while len < bytes.len() && bytes[len] == marker {
+        len += 1;
+    }
+
+    if len >= 3 { Some((marker, len)) } else { None }
 }
 
 pub fn build_fts_query(input: &str) -> Option<String> {
@@ -281,6 +377,62 @@ mod tests {
     }
 
     #[test]
+    fn frontmatter_scalar_types_survive_parsing_unchanged() {
+        // The YAML parser is the one seam where a scalar can silently change
+        // type — a quoted number becoming an integer, a date becoming a
+        // timestamp object — and every later read and every write round-trip
+        // inherits whatever it decides. Pin the decisions explicitly.
+        let content = concat!(
+            "---\n",
+            "quoted_number: \"123\"\n",
+            "bare_number: 123\n",
+            "quoted_bool: \"true\"\n",
+            "bare_bool: true\n",
+            "float: 1.50\n",
+            "date: 2026-08-29\n",
+            "quoted_date: \"2026-08-29\"\n",
+            "unicode: \"réseau — 日本語 🌱\"\n",
+            "multiline: |\n",
+            "  first line\n",
+            "  second line\n",
+            "folded: >\n",
+            "  folded one\n",
+            "  folded two\n",
+            "empty_value:\n",
+            "leading_zero: \"007\"\n",
+            "---\n",
+            "Body text.\n",
+        );
+
+        let metadata = parse_frontmatter_metadata(content).expect("valid frontmatter");
+        let properties = &metadata.properties;
+
+        assert_eq!(properties["quoted_number"], serde_json::json!("123"));
+        assert_eq!(properties["bare_number"], serde_json::json!(123));
+        assert_eq!(properties["quoted_bool"], serde_json::json!("true"));
+        assert_eq!(properties["bare_bool"], serde_json::json!(true));
+        assert_eq!(properties["float"], serde_json::json!(1.5));
+        // Dates stay strings either way: nothing downstream expects a
+        // timestamp type, and a silent conversion would rewrite the note.
+        assert_eq!(properties["date"], serde_json::json!("2026-08-29"));
+        assert_eq!(properties["quoted_date"], serde_json::json!("2026-08-29"));
+        assert_eq!(
+            properties["unicode"],
+            serde_json::json!("réseau — 日本語 🌱")
+        );
+        assert_eq!(
+            properties["multiline"],
+            serde_json::json!("first line\nsecond line\n")
+        );
+        assert_eq!(
+            properties["folded"],
+            serde_json::json!("folded one folded two\n")
+        );
+        assert_eq!(properties["empty_value"], serde_json::Value::Null);
+        assert_eq!(properties["leading_zero"], serde_json::json!("007"));
+    }
+
+    #[test]
     fn extracts_frontmatter_tags_inline_array() {
         let content = "---\ntags: [type/reference, topic/api, topic/foo-bar]\ncreated: 2026-01-01\n---\n\nBody text.";
         let tags = extract_tags(content);
@@ -316,6 +468,49 @@ mod tests {
         assert!(!tags.contains("freeform"), "free-form inline tag rejected");
         assert!(!tags.contains("1"), "numeric inline tag rejected");
         assert!(!tags.contains("0599"), "numeric inline tag rejected");
+    }
+
+    #[test]
+    fn markdown_link_citation_numbers_are_not_inline_tags() {
+        // `#1177](https://.../1177)` is one whitespace token, so the slash that
+        // used to satisfy the namespace check came from the URL and was then
+        // truncated away before the tag was stored (issue #248).
+        let content = concat!(
+            "See [ebusd discussion #1177](https://github.com/john30/ebusd/discussions/1177)\n",
+            "and [thread #25433](https://example.com/t/25433) for details.\n",
+        );
+        let tags = extract_tags(content);
+        assert!(!tags.contains("1177"), "citation number rejected");
+        assert!(!tags.contains("25433"), "citation number rejected");
+        assert!(tags.is_empty(), "no tag at all from citations: {tags:?}");
+    }
+
+    #[test]
+    fn hashtags_inside_fenced_blocks_and_inline_code_are_not_tags() {
+        let content = concat!(
+            "Real #area/health in prose.\n",
+            "\n",
+            "```markdown\n",
+            "#fenced/tag\n",
+            "```\n",
+            "\n",
+            "~~~\n",
+            "#tilde/tag\n",
+            "~~~\n",
+            "\n",
+            "Documented as `#inline/tag` in a code span.\n",
+        );
+        let tags = extract_tags(content);
+        assert!(tags.contains("area/health"), "prose tag still indexed");
+        assert!(!tags.contains("fenced/tag"), "backtick-fenced tag skipped");
+        assert!(!tags.contains("tilde/tag"), "tilde-fenced tag skipped");
+        assert!(!tags.contains("inline/tag"), "inline code span skipped");
+    }
+
+    #[test]
+    fn multi_segment_inline_tags_are_still_accepted() {
+        let tags = extract_tags("nested #a/b/c here");
+        assert!(tags.contains("a/b/c"), "multi-segment inline tag accepted");
     }
 
     #[test]

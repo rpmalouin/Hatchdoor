@@ -30,6 +30,14 @@ scope may identify one vault or all available vaults. Agent operations declare
 their scope explicitly; mutations always identify exactly one vault.
 _Avoid_: Active vault
 
+**Vault tree**:
+One vault's folders and notes as a nested structure, grouped per vault and never merged across vaults. Each folder reports the notes held directly inside it, excluding its subfolders. The tree states its vault once; the notes inside it are not separately vault-qualified, unlike the flat results of a search or a recently-modified read.
+_Avoid_: Folder tree, file tree, explorer tree (when meant as the returned structure)
+
+**Tree scope**:
+The part of a vault tree a read returns: the folder it starts from, how far below that it descends, and whether notes appear at all. Distinct from vault scope, which selects vaults rather than content; a tree read declares both. A tree scope naming a folder the vault does not have is refused, never answered with an empty folder.
+_Avoid_: Vault scope, path filter, subtree filter
+
 **Aggregated view**:
 A combined view of results from multiple vaults that preserves each result's
 vault-qualified identity. It does not merge vaults or create cross-vault links.
@@ -62,3 +70,27 @@ _Avoid_: Unavailable vault, broken vault
 A named classification of content within one vault. A vault contains layers;
 the collection of vaults is not itself another layer.
 _Avoid_: Vault layer
+
+**Index turn**:
+One unit of background indexing work for exactly one vault, requested through the shared work coordinator by the file watcher, a settings change, a manual rebuild, or activation. It scans that vault's Markdown, builds a candidate snapshot, and publishes it in two passes: structure first, so browsing does not wait, then vectors. A vault occupies at most one coordinator position, so repeated requests coalesce into the next turn.
+_Avoid_: Reindex, rebuild, refresh (when meant instance-wide)
+
+**Git turn**:
+One unit of background Git work for exactly one vault, requested through the same work coordinator by the managed-Git scheduler, a manual sync or retry, or activation, and run under that vault's mutation lock. The vault source and Git mode select the operation: acquire or reuse and synchronise a managed checkout, synchronise an existing checkout with its remote, or commit local history.
+_Avoid_: Sync task, git sync, debounce (when meant instance-wide)
+
+**Note property**:
+A labelled fact in one note's frontmatter, such as a price or a renewal date. Distinct from the frontmatter block itself, which is where properties live; a query tests properties, not the block.
+_Avoid_: Field, attribute, metadata
+
+**Query**:
+A request for the notes whose properties, tags, or path satisfy stated conditions. A query selects: a note either qualifies or it does not, and the notes come back in a stable order. Distinct from a search, which finds notes by meaning and ranks them by how well they match.
+_Avoid_: Search, filter, lookup
+
+**Saved query**:
+A query stored inside a note rather than supplied by a caller, evaluated against that note's own vault each time the note is read. Its meaning does not vary by caller or by scope, which is the reason it exists. A note may hold several; each may carry a name, unique within that note, by which it is addressed from outside.
+_Avoid_: Base, view, aggregator note, dashboard
+
+**Query result**:
+The notes a query selects, projected as rows carrying the properties the query asked for. Derived state: recomputed on demand and never written into a note. A saved query's result is not vault content, so it is absent from search, backlinks, statistics, and the graph.
+_Avoid_: Computed content, rendered note

@@ -212,10 +212,16 @@ fn bounded_vault_path(vault_root: &Path, path: &Path) -> String {
         .ok()
         .filter(|relative| !relative.as_os_str().is_empty())
         .map(|relative| relative.to_string_lossy().into_owned())
-        .or_else(|| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
+        .unwrap_or_else(|| bounded_write_name(path))
+}
+
+/// The note's own name, with the directories it sits under left off. A
+/// recovery message is the one write failure that reaches an API client
+/// unsanitized, so it carries this rather than the absolute host path the
+/// rest of this layer puts in its logs.
+fn bounded_write_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "<vault path>".to_string())
 }
 
@@ -269,7 +275,7 @@ pub(super) fn atomic_write_if_unchanged(
 }
 
 pub(super) fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), WriteError> {
-    atomic_write_inner(path, bytes, None, || {})
+    atomic_write_inner(path, bytes, None, || {}, || {})
 }
 
 fn atomic_write_bytes_if_unchanged(
@@ -277,7 +283,7 @@ fn atomic_write_bytes_if_unchanged(
     bytes: &[u8],
     expected_content_hash: &str,
 ) -> Result<(), WriteError> {
-    atomic_write_inner(path, bytes, Some(expected_content_hash), || {})
+    atomic_write_inner(path, bytes, Some(expected_content_hash), || {}, || {})
 }
 
 #[cfg(test)]
@@ -292,6 +298,26 @@ fn atomic_write_if_unchanged_with_before_exchange(
         content.as_bytes(),
         Some(expected_content_hash),
         before_exchange,
+        || {},
+    )
+}
+
+/// Drives the window between the commit exchange and the read-back that
+/// verifies what the exchange displaced. Only a test needs to reach in there,
+/// to stand in for an external process touching the Vault directory mid-write.
+#[cfg(test)]
+fn atomic_write_if_unchanged_with_after_exchange(
+    path: &Path,
+    content: &str,
+    expected_content_hash: &str,
+    after_exchange: impl FnOnce(),
+) -> Result<(), WriteError> {
+    atomic_write_inner(
+        path,
+        content.as_bytes(),
+        Some(expected_content_hash),
+        || {},
+        after_exchange,
     )
 }
 
@@ -300,6 +326,7 @@ fn atomic_write_inner(
     bytes: &[u8],
     expected_content_hash: Option<&str>,
     before_commit: impl FnOnce(),
+    after_exchange: impl FnOnce(),
 ) -> Result<(), WriteError> {
     let (parent, filename) = open_parent_dir_no_follow(path)?;
     let (tmp_name, mut file) = create_unique_temporary_file(&parent, &filename)?;
@@ -325,20 +352,47 @@ fn atomic_write_inner(
         // save therefore becomes detectable and is swapped back, rather than
         // being silently overwritten in a check-then-rename gap.
         rename_exchange(&parent, &tmp_name, &parent, &filename)?;
-        let prior = read_file_at_no_follow(&parent, &tmp_name).map_err(|error| {
-            let _ = rename_exchange(&parent, &tmp_name, &parent, &filename);
-            WriteError::Io(format!(
-                "failed to inspect replaced note '{}': {error}",
-                path.display()
-            ))
-        })?;
+        after_exchange();
+        // The exchange is the commit point. From here the destination already
+        // holds the new bytes, so every failure below turns on whether the
+        // undo put them back: reporting one as a plain failure told a caller
+        // its write had not landed while the new content sat committed.
+        //
+        // A recovery message reaches an API client unsanitized, so it names
+        // the note and the sidecar without their directories.
+        let note = bounded_write_name(path);
+        let sidecar = tmp_name.to_string_lossy().into_owned();
+        let prior = match read_file_at_no_follow(&parent, &tmp_name) {
+            Ok(prior) => prior,
+            Err(read_error) => {
+                return Err(
+                    match rename_exchange(&parent, &tmp_name, &parent, &filename) {
+                        Ok(()) => {
+                            let _ = unlink_at(&parent, &tmp_name);
+                            WriteError::Io(format!(
+                                "failed to inspect replaced note '{}': {read_error}",
+                                path.display()
+                            ))
+                        }
+                        Err(undo_error) => WriteError::recovery_required(format!(
+                            "note '{note}' was replaced, its prior content could not be read \
+                             back ({read_error}), and the replacement could not be undone \
+                             ({undo_error}). The new content is committed and was never \
+                             checked against the expected hash; the prior content is in \
+                             '{sidecar}' beside it if that file still exists."
+                        )),
+                    },
+                );
+            }
+        };
         if content_hash(&prior) != expected.trim() {
-            rename_exchange(&parent, &tmp_name, &parent, &filename).map_err(|error| {
-                WriteError::Io(format!(
-                    "failed to restore concurrently changed note '{}': {error}",
-                    path.display()
-                ))
-            })?;
+            if let Err(undo_error) = rename_exchange(&parent, &tmp_name, &parent, &filename) {
+                return Err(WriteError::recovery_required(format!(
+                    "note '{note}' changed since it was read, and the replacement could not be \
+                     undone ({undo_error}). The new content is committed over that change, \
+                     whose content is in '{sidecar}' beside it if that file still exists."
+                )));
+            }
             let _ = unlink_at(&parent, &tmp_name);
             return Err(WriteError::Conflict(format!(
                 "note changed since it was read: expected {}, found {}",
@@ -346,7 +400,10 @@ fn atomic_write_inner(
                 content_hash(&prior)
             )));
         }
-        unlink_at(&parent, &tmp_name)?;
+        // Committed and verified. A sidecar that will not unlink is
+        // dot-prefixed litter the Vault already excludes as noise, and
+        // failing here would report a correct write as a failure.
+        let _ = unlink_at(&parent, &tmp_name);
     } else {
         ensure_safe_destination_at(&parent, &filename, path)?;
         rename_at(&parent, &tmp_name, &parent, &filename)?;
@@ -396,6 +453,12 @@ fn open_existing_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error>
     open_file_at_no_follow(&parent, &filename)
 }
 
+/// Every in-flight write parks its bytes at this prefix beside the
+/// destination, so one name covers creating them and recognising them.
+fn temporary_sidecar_prefix(filename: &str) -> String {
+    format!(".{filename}.hatchdoor-tmp-")
+}
+
 fn create_unique_temporary_file(
     parent: &fs::File,
     filename: &CString,
@@ -412,7 +475,7 @@ fn create_unique_temporary_file(
             ))
         })?;
         let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
-        let tmp = CString::new(format!(".{filename}.hatchdoor-tmp-{suffix}"))
+        let tmp = CString::new(format!("{}{suffix}", temporary_sidecar_prefix(filename)))
             .expect("generated name has no NUL");
         match create_file_at_no_follow(parent, &tmp) {
             Ok(file) => return Ok((tmp, file)),
@@ -547,7 +610,7 @@ pub(super) fn move_file_no_follow(source: &Path, destination: &Path) -> Result<(
             destination.display()
         )));
     }
-    if let Err(error) = read_regular_file_at(&destination_parent, &destination_name) {
+    if let Err(error) = assert_regular_file_at(&destination_parent, &destination_name) {
         restore_move_from_gate(
             &source_parent,
             &source_name,
@@ -739,7 +802,10 @@ fn read_file_at_no_follow(parent: &fs::File, name: &CString) -> Result<String, s
     Ok(content)
 }
 
-fn read_regular_file_at(parent: &fs::File, name: &CString) -> Result<String, std::io::Error> {
+/// Assert the entry is an ordinary file: not a symlink, directory, device
+/// node, or FIFO. This is the whole of the safety property the move guard
+/// needs, and it says nothing about the bytes inside.
+fn assert_regular_file_at(parent: &fs::File, name: &CString) -> Result<(), std::io::Error> {
     let metadata = metadata_at_no_follow(parent, name)?;
     if metadata.st_mode & libc::S_IFMT != libc::S_IFREG {
         return Err(std::io::Error::new(
@@ -747,6 +813,15 @@ fn read_regular_file_at(parent: &fs::File, name: &CString) -> Result<String, std
             "source is not a regular file",
         ));
     }
+    Ok(())
+}
+
+/// The regular-file assertion plus a text read, for the paths that go on to
+/// hash the content as Markdown. Anything that only needs the file to be a
+/// file must call [`assert_regular_file_at`] instead: an attachment is
+/// arbitrary bytes and need not decode as UTF-8 (#220).
+fn read_regular_file_at(parent: &fs::File, name: &CString) -> Result<String, std::io::Error> {
+    assert_regular_file_at(parent, name)?;
     read_file_at_no_follow(parent, name)
 }
 
@@ -854,8 +929,18 @@ fn io_error(write_error: WriteError) -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vault::write::tests::BINARY_ASSET;
     use crate::vault::write::types::AssetMove;
     use tempfile::tempdir;
+
+    #[cfg(unix)]
+    fn make_fifo(path: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+
+        let name = CString::new(path.as_os_str().as_bytes()).expect("fifo path");
+        let result = unsafe { libc::mkfifo(name.as_ptr(), 0o600) };
+        assert_eq!(result, 0, "mkfifo: {}", std::io::Error::last_os_error());
+    }
 
     #[test]
     fn atomic_write_persists_content_and_leaves_no_temp_file() {
@@ -911,6 +996,169 @@ mod tests {
         assert_eq!(fs::read_to_string(&note).unwrap(), "manual edit");
     }
 
+    /// The in-flight temporary sidecar beside `note`.
+    fn find_write_sidecar(note: &Path) -> PathBuf {
+        let directory = note.parent().expect("note parent");
+        let prefix =
+            temporary_sidecar_prefix(&note.file_name().expect("note name").to_string_lossy());
+        fs::read_dir(directory)
+            .expect("read vault directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+            })
+            .expect("an in-flight write must have a temporary sidecar")
+    }
+
+    /// Removes that sidecar, standing in for an external process cleaning the
+    /// Vault directory mid-write.
+    fn remove_write_sidecar(note: &Path) {
+        fs::remove_file(find_write_sidecar(note)).expect("remove sidecar");
+    }
+
+    /// The commit exchange has already published the new bytes by the time the
+    /// displaced content is read back. If that read fails and the swap back
+    /// cannot be undone, the write stands, and saying so is the whole point:
+    /// reporting a plain I/O failure told the caller its write had not landed
+    /// while the new content sat committed in the Vault.
+    #[test]
+    fn atomic_write_reports_recovery_when_a_committed_exchange_cannot_be_undone() {
+        let dir = tempdir().expect("tempdir");
+        let note = dir.path().join("Note.md");
+        fs::write(&note, "original").expect("original note");
+        let expected = content_hash("original");
+
+        let error =
+            atomic_write_if_unchanged_with_after_exchange(&note, "agent edit", &expected, || {
+                remove_write_sidecar(&note)
+            })
+            .expect_err("an unverifiable committed write must not report plain success");
+
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "agent edit",
+            "the exchange already committed, so the new content is what is on disk"
+        );
+        let recovery = error.recovery_message().unwrap_or_else(|| {
+            panic!("a landed write that cannot be undone needs operator action, got: {error:?}")
+        });
+        assert!(
+            recovery.contains("Note.md"),
+            "the operator has to be told which note: {recovery}"
+        );
+        assert!(
+            !recovery.contains(dir.path().to_string_lossy().as_ref()),
+            "a recovery message reaches clients unsanitized and must not carry the host path: {recovery}"
+        );
+    }
+
+    /// The other half of the same window: when the swap back *does* succeed,
+    /// the note must be left exactly as it was and the sidecar must not
+    /// survive as litter in the Vault.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_restores_the_note_and_clears_its_sidecar_when_the_undo_succeeds() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        let note = dir.path().join("Note.md");
+        fs::write(&note, "original").expect("original note");
+        let expected = content_hash("original");
+
+        let outcome =
+            atomic_write_if_unchanged_with_after_exchange(&note, "agent edit", &expected, || {
+                // Unreadable rather than absent, so the read fails with the
+                // displaced file still there for the undo to swap back.
+                let sidecar = find_write_sidecar(&note);
+                fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o000))
+                    .expect("seal sidecar");
+            });
+
+        // Root ignores the mode bits, so the read succeeds and this window
+        // never opens. Nothing to assert about a path that did not run.
+        if outcome.is_ok() {
+            panic!("PROBE: took the root escape hatch");
+        }
+        // The restored file is the sealed one, so it comes back with the mode
+        // the test set. Reopen it before reading its contents.
+        fs::set_permissions(&note, fs::Permissions::from_mode(0o644)).expect("reopen note");
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "original",
+            "a write whose verification failed must leave the note untouched"
+        );
+        let leftovers = fs::read_dir(dir.path())
+            .expect("read vault directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(&temporary_sidecar_prefix("Note.md")))
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "an undone write must not leave its sidecar behind: {leftovers:?}"
+        );
+    }
+
+    /// The neighbouring branch: the read-back succeeds and reports a genuine
+    /// concurrent change, but the restore that would undo the commit cannot
+    /// run. The new content stands over someone else's edit, which is the
+    /// same state as an unverifiable write and is reported the same way.
+    #[test]
+    fn atomic_write_reports_recovery_when_a_concurrent_change_cannot_be_restored() {
+        let dir = tempdir().expect("tempdir");
+        let note = dir.path().join("Note.md");
+        fs::write(&note, "original").expect("original note");
+        let stale = content_hash("what the caller last read");
+
+        let error =
+            atomic_write_if_unchanged_with_after_exchange(&note, "agent edit", &stale, || {
+                fs::remove_file(&note).expect("external delete of the committed note")
+            })
+            .expect_err("a commit that cannot be restored must not report a plain conflict");
+
+        let recovery = error.recovery_message().unwrap_or_else(|| {
+            panic!("an unrestorable commit needs operator action, got: {error:?}")
+        });
+        assert!(
+            recovery.contains("Note.md"),
+            "the operator has to be told which note: {recovery}"
+        );
+    }
+
+    /// A verified write is finished, whatever happens to its sidecar
+    /// afterwards. Failing here reported a correct, committed, hash-checked
+    /// save as an error.
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_succeeds_when_its_verified_sidecar_cannot_be_removed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Root writes through the mode bits, so the unlink would not fail and
+        // this window would never open.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let note = dir.path().join("Note.md");
+        fs::write(&note, "original").expect("original note");
+        let expected = content_hash("original");
+
+        let outcome =
+            atomic_write_if_unchanged_with_after_exchange(&note, "agent edit", &expected, || {
+                // Read and search stay open so the verification still runs;
+                // only the unlink that follows it is refused.
+                fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555))
+                    .expect("seal vault directory");
+            });
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).expect("reopen");
+
+        outcome.expect("a verified write must not fail over an unremovable sidecar");
+        assert_eq!(fs::read_to_string(&note).unwrap(), "agent edit");
+    }
+
     #[cfg(unix)]
     #[test]
     fn atomic_write_keeps_the_commit_in_the_opened_parent_after_a_path_swap() {
@@ -925,10 +1173,16 @@ mod tests {
         let note = notes.join("Note.md");
         let original_parent = vault.join("Notes-original");
 
-        atomic_write_inner(&note, b"safe\n", None, || {
-            fs::rename(&notes, &original_parent).expect("swap away opened parent");
-            symlink(&external, &notes).expect("replace path with external symlink");
-        })
+        atomic_write_inner(
+            &note,
+            b"safe\n",
+            None,
+            || {
+                fs::rename(&notes, &original_parent).expect("swap away opened parent");
+                symlink(&external, &notes).expect("replace path with external symlink");
+            },
+            || {},
+        )
         .expect("descriptor-relative commit");
 
         assert_eq!(
@@ -985,6 +1239,112 @@ mod tests {
         assert!(source.is_symlink());
         assert!(!destination.exists());
         assert_eq!(fs::read_to_string(&sentinel).unwrap(), "sentinel");
+    }
+
+    #[test]
+    fn move_file_no_follow_rejects_a_path_carrying_a_parent_component() {
+        // #225: the planner must normalise `..` away before it gets here. This
+        // pins the syscall-level rejection that catches it if it ever does not:
+        // the parent walk opens one plain name at a time, so `..` is refused
+        // rather than followed. Nothing above may relax this.
+        let dir = tempdir().expect("tempdir");
+        let nested = dir.path().join("folder-x");
+        fs::create_dir_all(&nested).expect("nested dir");
+        let source = dir.path().join("asset.png");
+        fs::write(&source, BINARY_ASSET).expect("source");
+        let destination = nested.join("../moved.png");
+
+        let error = move_file_no_follow(&source, &destination)
+            .expect_err("a destination carrying '..' must not reach the filesystem");
+
+        let WriteError::Io(message) = error else {
+            panic!("expected an I/O error naming the unsupported component");
+        };
+        assert!(
+            message.contains("write path has unsupported component"),
+            "unexpected message: {message}"
+        );
+        assert!(source.exists(), "the source must be left alone");
+        assert!(!dir.path().join("moved.png").exists());
+    }
+
+    #[test]
+    fn move_file_no_follow_moves_bytes_that_are_not_valid_utf8() {
+        // issue #220: an attachment is arbitrary bytes. The post-move guard
+        // exists to prove the moved thing is a regular file, not that it
+        // decodes as text, so a real image or PDF must move unchanged.
+        let dir = tempdir().expect("tempdir");
+        let source = dir.path().join("photo.jpg");
+        let destination = dir.path().join("moved.jpg");
+        fs::write(&source, BINARY_ASSET).expect("source");
+
+        move_file_no_follow(&source, &destination).expect("a binary asset must move");
+
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination).unwrap(), BINARY_ASSET);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn move_file_no_follow_rejects_a_fifo_source_and_restores_it() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let dir = tempdir().expect("tempdir");
+        let source = dir.path().join("asset.png");
+        let destination = dir.path().join("moved.png");
+        make_fifo(&source);
+
+        let error =
+            move_file_no_follow(&source, &destination).expect_err("a FIFO must not be moved");
+
+        assert!(matches!(error, WriteError::Conflict(_)));
+        assert!(
+            fs::symlink_metadata(&source)
+                .expect("fifo metadata")
+                .file_type()
+                .is_fifo(),
+            "the refused source must be restored as it was"
+        );
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn mutation_journal_restores_binary_asset_bytes_when_a_later_move_fails() {
+        // issue #220: rollback replays the same move primitive, so the bytes
+        // of an asset already moved by an earlier step must survive the round
+        // trip when a later step of the same mutation fails.
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path();
+        let binary = root.join("photo.jpg");
+        let sibling = root.join("notes.txt");
+        fs::write(&binary, BINARY_ASSET).expect("binary asset");
+        fs::write(&sibling, "text asset").expect("text asset");
+        let dst_dir = root.join("dst");
+        fs::create_dir(&dst_dir).expect("dst dir");
+
+        let mut journal = MutationJournal::new(root);
+        journal
+            .move_file(MutationPhase::Asset, &binary, &dst_dir.join("photo.jpg"))
+            .expect("binary asset move");
+        // The second asset's destination parent does not exist, so its move
+        // fails deterministically after the first has committed.
+        let cause = journal
+            .move_file(
+                MutationPhase::Asset,
+                &sibling,
+                &root.join("missing_dir").join("notes.txt"),
+            )
+            .expect_err("the later move must fail");
+        let error = journal.rollback(cause);
+
+        assert!(matches!(error, WriteError::Io(_)));
+        assert_eq!(
+            fs::read(&binary).expect("restored asset"),
+            BINARY_ASSET,
+            "rollback must restore the original bytes"
+        );
+        assert!(!dst_dir.join("photo.jpg").exists());
+        assert_eq!(fs::read_to_string(&sibling).unwrap(), "text asset");
     }
 
     #[test]
