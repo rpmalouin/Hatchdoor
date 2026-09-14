@@ -2,6 +2,12 @@
 
 ## Unreleased (fork `faaa77e`)
 
+- **The fork now tracks upstream v2.6.1** (merged in `4e568cc`, 176 upstream commits
+  since the previous fork point `e631857`/v2.5.0). Upstream's v2.6.0 and v2.6.1 release
+  notes are in this file below; the fork's own deltas (WebDAV vault source + sync
+  reconciliation, fuse write/index resilience, dependency security pins) were carried
+  through the merge unchanged in behaviour.
+
 - **WebDAV sync is now a full reconciliation, not additive-only.** Previously
   the sync engine pulled remote files missing locally and pushed any local file
   the remote did not list, but never refreshed files present on both sides and

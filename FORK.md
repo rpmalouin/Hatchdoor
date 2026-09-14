@@ -10,7 +10,10 @@ Each delta is listed below; everything else tracks upstream unchanged.
 
 ## Delta over upstream
 
-Fork point: upstream merge `e631857`. All commits after it, in order:
+Fork base: upstream **v2.6.1** (upstream merge `c2b9861`, 2026-09-08), pulled into the
+fork by the merge commit `4e568cc` (2026-09-14) — 176 upstream commits on top of the
+previous fork point `e631857` (v2.5.0). Every delta below was carried through that
+merge; the table lists the fork's own commits since `e631857`, in order:
 
 | Commit | Change |
 | ------ | ------ |
@@ -35,6 +38,35 @@ Fork point: upstream merge `e631857`. All commits after it, in order:
 | `2e9ba83` | `docs`: record gdrive-build operational caveats in FORK.md |
 | `a08bde2` | `docs(hermes)`: write the raw MCP probe's token variable as `<VAR>` (no `$`), which the context-file scanner otherwise blocks |
 | `f5c5da4` | `docs(hermes)`: document cron alerting, correct the drift-job spec, list unlisted deltas |
+| `4e568cc` | `chore(merge)`: merge upstream v2.6.1 into the fork (176 commits); 12 conflicted files resolved, all WebDAV deltas preserved (see below) |
+
+### Details of the upstream merge (`4e568cc`)
+
+Merged upstream `main` at v2.6.1 (`c2b9861`) — 176 commits since `e631857`. Twelve files
+conflicted; each was resolved by taking upstream's structure where it had restructured and
+re-applying the fork's deltas into it:
+
+- `Cargo.toml` / `Cargo.lock` — union of both sides (`reqwest` + `roxmltree` from the
+  fork, `rmcp = "=3.1.4"` from upstream). The fork's security pin `h2 = 0.4.19` is kept:
+  upstream's lock still carried 0.4.15, so the lock is reconciled with
+  `cargo update -p h2 --precise 0.4.19`.
+- `src/app_state.rs`, `src/server.rs`, `src/vault_runtime.rs`, `src/handlers/vaults.rs`,
+  `src/mcp/routes.rs`, `src/mcp/tools/mod.rs` — both sides kept: upstream's per-Vault
+  commit cooldown, running-version/`GIT_SHA` reporting and router changes, plus the
+  fork's `WebDavScheduler`, `spawn_webdav_tick`, per-Vault webdav poll
+  activation/deactivation, `dispatch_webdav_turn`, and the "a WebDAV vault is not git"
+  arms.
+- `src/vault_runtime/tests.rs` — upstream relocated the index tests to
+  `vault_executor/tests.rs`; the relocation was taken and the fork's webdav tests kept.
+- `AGENTS.md` — upstream's version (the machine-local agent scaffolding stays
+  uncommitted, as always).
+- `CHANGELOG.md`, `docs/architecture/module-map.md` — both sides' prose merged.
+
+Verified after the merge: `cargo check`, `cargo check --tests`,
+`node scripts/check-module-map.mjs` (213 production files, each owned exactly once),
+frontend `npm run typecheck`, `vitest` (22 files / 393 tests), and upstream's
+`verification` Docker target — `cargo test --locked` as a non-root user:
+**1122 + 5 tests, 0 failed**.
 
 ### Details of the security commit (`04fee5e`)
 
@@ -225,11 +257,29 @@ cron — is in [`HERMES.md`](HERMES.md).
 
 ## Syncing with upstream
 
+The fork is kept current by **merging** upstream into a branch and fast-forwarding `main`
+once the gates pass (a rebase would rewrite the published fork history, and the fork's
+deltas sit in files upstream also edits, so the conflicts have to be resolved either way):
+
 ```bash
-git fetch upstream          # assumes upstream = https://github.com/BatterWorks/Hatchdoor
-git rebase upstream/main    # keep the fork's deltas on top of upstream
-git push --force-with-lease origin main
+git fetch https://github.com/BatterWorks/Hatchdoor main:refs/remotes/upstream/main
+git tag pre-upstream-merge-$(date +%Y%m%d) HEAD          # rollback point
+git checkout -b merge/upstream-<version>
+git merge --no-ff --no-commit upstream/main              # resolve conflicts
+#  - upstream wins where it restructured; re-apply the fork's WebDAV deltas into it
+#  - Cargo.toml/Cargo.lock: union of both sides, then keep h2 pinned at 0.4.19
+#  - never leave conflict markers; keep BOTH sides' tests
+cargo check && cargo check --tests && node scripts/check-module-map.mjs
+(cd frontend && npm run typecheck && npx vitest run)
+git commit                                                # the merge commit
+docker build --target verification -t hatchdoor:verify .  # cargo test, non-root
+git checkout main && git merge --ff-only merge/upstream-<version>
+git push origin main
 ```
+
+Rebuild and redeploy the running deployment afterwards (`docker build` the image, then
+`docker compose up -d`), and revert with `git reset --hard pre-upstream-merge-<date>` +
+a rebuild if the merge proves bad.
 
 If upstream merges an equivalent security fix, that delta can simply be dropped:
 `git reset --hard upstream/main` and archive this fork. (The WebDAV feature

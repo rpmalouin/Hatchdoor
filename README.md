@@ -16,7 +16,8 @@
 # Hatchdoor
 
 > **This is `rpmalouin/Hatchdoor`, a fork.** It tracks upstream
-> [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor) and carries
+> [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor) — currently
+> **v2.6.1** (merge `4e568cc`) — and carries
 > a small, documented set of deltas on top: a dependency security-hardening
 > commit, native WebDAV vault support (whose sync engine reconciles remote
 > edits and deletions instead of only pulling additions), and fuse-vault

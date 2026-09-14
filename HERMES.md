@@ -229,12 +229,25 @@ two fixes the WebDAV-mirror write path requires:
   (5-6x `_Inbox`/`_Areas`/`Home` basenames) no longer abort the index build
   with `UNIQUE constraint failed: notes.slug`.
 
-Rebuild procedure (source repo: `/appdata/Hatchdoor`, stack:
+Since the merge commit `4e568cc` the fork tracks **upstream v2.6.1**; the deltas
+above are re-integrated into upstream's newer structure (the WebDAV scheduler is
+spawned and aborted in server startup/shutdown, per-Vault poll intervals activate
+and deactivate in `vault_runtime`, and a WebDAV vault still never takes a git
+turn). Rebuild procedure (source repo: `/appdata/Hatchdoor`, stack:
 `/appdata/A--docker_stacks/Hatchdoor`):
+
 ```
 cd /appdata/A--docker_stacks/Hatchdoor
 docker compose build && docker compose up -d --force-recreate
 ```
+
+Upstream builds now require **BuildKit** (current Docker uses it by default) and accept a
+`GIT_SHA` build arg that makes the running build report `2.6.1 (dev abc1234)` in the
+startup log and MCP `serverInfo`; the same Dockerfile carries a `verification` target that
+runs `cargo test --locked` as a non-root user — use it as the gate after any merge:
+`docker build --target verification -t hatchdoor:verify .` (the host cannot link the test
+binary: pre-existing `ort`/`__isoc23` glibc issue).
+
 Verify with `hermes mcp test hatchdoor` and `list_vaults` (search must read
 `ready`).
 
