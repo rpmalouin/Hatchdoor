@@ -961,7 +961,6 @@ impl<'a> VaultCollectionManagement<'a> {
         let registry = self.state.vault_registry.clone();
         let vault_work = self.state.vault_work.clone();
         let managed_git = self.state.managed_git.clone();
-        let webdav = self.state.webdav.clone();
         let snapshot = snapshot.clone();
         let (mutation_boundary, mutation_safe) = tokio::sync::oneshot::channel();
         let _reconciled = tokio::spawn(async move {
@@ -971,7 +970,6 @@ impl<'a> VaultCollectionManagement<'a> {
                     &snapshot,
                     &vault_work,
                     &managed_git,
-                    &webdav,
                     mutation_boundary,
                 )
                 .await;
@@ -1124,9 +1122,6 @@ pub(crate) mod test_support {
             vault_work: vault_work.clone(),
             managed_git,
             commit_cooldown: std::sync::Arc::new(crate::git::CommitCooldown::new()),
-            webdav: std::sync::Arc::new(crate::vault::remote::WebDavScheduler::new(
-                vault_work.clone(),
-            )),
             legacy_migration_recovery: std::sync::Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: std::sync::Arc::new(
                 SqliteCache::in_memory(384).expect("in-memory cache"),

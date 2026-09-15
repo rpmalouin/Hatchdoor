@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased (fork `faaa77e`)
+## Unreleased
+
+- **Fork: the WebDAV vault source was removed.** The fork previously added a
+  `VaultSource::WebDav` (RFC-4918 client, mirror sync engine, sync-turn scheduler,
+  settings UI) so a vault living on Google Drive could be attached through an
+  `rclone serve webdav` sidecar. That whole feature is gone: the client
+  (`src/vault/remote/`), the enum variant, `VaultWorkKind::WebDav`, the scheduler
+  wiring, the frontend "Add a Vault → WebDAV endpoint" option and the unit tests.
+  The `roxmltree` and `reqwest` dependencies went with it (the deployment no longer
+  holds any Google credential for its vault). **Why:** the feature existed to serve
+  one deployment's remote vault, and that deployment now mounts the vault over SMB
+  and registers it as a plain `Local` source — no fork code involved. Keeping an
+  unused vault-source implementation meant re-integrating it by hand into upstream's
+  restructured code on every release merge, which is the real cost of a fork-only
+  delta. **Migrating a Vault:** anything that pointed at a `web_dav` source should
+  point at a mounted directory instead (bind the mount into the container, then
+  register the Vault as `Local`). A registry that still contains a `web_dav` Vault
+  no longer loads — remove that entry, or check out the commit before the removal.
+  Docs: `FORK.md` → *Removal of the WebDAV vault source*.
 
 - **The fork now tracks upstream v2.6.1** (merged in `4e568cc`, 176 upstream commits
   since the previous fork point `e631857`/v2.5.0). Upstream's v2.6.0 and v2.6.1 release

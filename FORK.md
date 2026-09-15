@@ -4,10 +4,13 @@
 
 `rpmalouin/Hatchdoor` is a fork of [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor).
 It tracks upstream `main` and carries a small, documented set of deltas on top:
-a dependency security-hardening commit, native WebDAV vault support with a
-reconciling sync engine (which this deployment uses to serve a **Google Drive
-vault**), and fuse-vault resilience. Each delta is listed below; everything else
-tracks upstream unchanged.
+a dependency security-hardening commit and fuse-vault write/index resilience.
+An earlier delta — a native **WebDAV `VaultSource`** with a reconciling sync engine,
+built so this deployment could attach a Google Drive vault through an `rclone serve
+webdav` sidecar — has been **removed** (see *Removal of the WebDAV vault source*
+below). The deployment it served now mounts its vault over SMB and registers it as a
+plain `Local` source, which needs no fork code. Each remaining delta is listed below;
+everything else tracks upstream unchanged.
 
 ## Delta over upstream
 
@@ -45,6 +48,40 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `d6d1f05` | `fix(webdav)`: publish local edits to notes the remote still lists (see below) |
 | `85b4f19` | `fix(webdav)`: never heal a copy written in the same second as the last sync |
 | `e204450` | `docs`: record the WebDAV publish/heal deltas in FORK.md |
+
+## Removal of the WebDAV vault source
+
+**What was removed.** `VaultSource::WebDav` and everything that existed only to serve it: the
+RFC-4918 client and the reconciling mirror sync engine (`src/vault/remote/`), `VaultWorkKind::WebDav`
+and its dispatch arm (`dispatch_webdav_turn`), the per-Vault sync-turn scheduler
+(`webdav_scheduler.rs`, threaded through `app_state`, `server` and `vault_runtime`), the registry
+variant's validation / identity / poll-interval surface, the settings UI's "Add a Vault → WebDAV
+endpoint" option and its edit-flow mapping, the WebDAV unit tests, and the `roxmltree` + `reqwest`
+dependencies that only that client used. `REGISTRY_SCHEMA_VERSION` stays at 1: a registry that still
+holds a `web_dav` Vault now fails to load with `unknown variant web_dav` — remove that entry, or
+check out the commit before this one.
+
+**Why.** A fork-only feature carries a standing tax: every upstream release merge re-integrates it
+by hand into code upstream has restructured. The v2.6.1 merge is exactly that cost, itemised in
+*Details of the upstream merge* below (the fork's WebDAV scheduler, its activation hooks in
+`vault_runtime`, and its "a WebDAV vault is not git" arms all had to be re-applied to upstream's
+newer files). The feature existed for a single deployment, and that deployment now gets the same
+vault a simpler way: the Mac's Obsidian folder is exported over SMB, the host mounts it
+(`/etc/fstab`), the container binds the mount, and Hatchdoor serves it as a plain `Local` source.
+
+**What the switch bought, measured:** no Google OAuth credential on the host for the vault (it used
+to expire on a 7-day cycle while the OAuth app sat in "testing"), no `rclone serve webdav` sidecar,
+no second copy of the vault (the mirror), and no sync turn that walked ~253 directories one PROPFIND
+at a time (~4 minutes per turn, giving ~8-11 minutes of effective freshness). **What it cost:** the
+vault is now only as available as the Mac, and freshness is bounded by a 5-minute re-index timer,
+because macOS's SMB server delivers no change notifications to Linux clients (measured: zero inotify
+events for a round of Obsidian edits, while a stat rescan saw them within ~4 seconds). Both trade-offs
+and their verification are in `HERMES.md` §12.
+
+**What a Vault source is today:** `Local` (any directory, including a mounted network share),
+`ExistingGit`, `ManagedGit`. Should an RFC-4918 source ever be wanted again, the design record is
+`docs/architecture/work-packet-webdav-vaultsource.md` (marked SUPERSEDED) and the implementation is
+in the commit before this one.
 
 ### Details of the upstream merge (`4e568cc`)
 
@@ -223,13 +260,17 @@ fuse-style mount where the stock Hatchdoor write/index paths fail:
   `_Inbox`/`_Areas`/`Home` basenames) no longer abort the index build with
   `UNIQUE constraint failed: notes.slug`.
 
-## The gdrive build: how this fork serves a Google Drive vault
+## The reference deployment: a vault mounted over SMB
+
+*(History of this section: it used to be titled "The gdrive build" and describe an `rclone-webdav`
+sidecar serving `gdrive:MyObsidian` into a mirror. That path, and the fork code behind it, were
+removed — see *Removal of the WebDAV vault source* above. What follows is what actually runs.)*
 
 This fork exists because the deployment vault is edited on another machine, and
-Hatchdoor (stock or the Docker Hub image) could not attach it directly. The fork adds
-a native **WebDAV `VaultSource`** for that. Since 2026-09-15 the deployment uses the
-simpler shape instead — a plain **`Local` source over an SMB mount** of the same
-folder — which needs no fork code at all.
+Hatchdoor (stock or the Docker Hub image) could not attach it directly. The fork added a
+native **WebDAV `VaultSource`** for that — and has since **removed** it: the deployment
+now attaches the same folder over an SMB mount as a plain `Local` source, which needs no
+fork code at all (*Removal of the WebDAV vault source* above).
 
 ### Deployment (what runs today)
 

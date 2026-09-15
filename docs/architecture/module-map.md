@@ -815,9 +815,6 @@ synchronized; no automated cross-language schema check currently exists.
 - `src/vault/layers.rs`
 - `src/vault/links.rs`
 - `src/vault/paths.rs`
-- `src/vault/remote/mod.rs`
-- `src/vault/remote/sync.rs`
-- `src/vault/remote/webdav_scheduler.rs`
 - `src/vault/seed.rs`
 - `src/vault/types.rs`
 - `src/vault/tests.rs`
@@ -845,11 +842,7 @@ route or the MCP `get_attachment` tool would refuse.
 **Consumed dependencies:** filesystem traversal and parsing; `cache::parse`
 currently supplies content hashing to the index and, since #248, the shared
 Markdown code-region scanner (`for_non_code_line`) the link reader uses to skip
-fenced code blocks and inline code spans. `vault/remote` additionally
-uses `reqwest` (already a transitive dep) and `roxmltree` for the WebDAV
-source's remote client; the WebDAV source itself is a later packet that reuses
-Hatchdoor's ManagedGit pattern (local mirror checkout + background sync) rather
-than serving exact-note reads from the disposable cache (ADR-01).
+fenced code blocks and inline code spans.
 
 **Consumers:** cache population, handlers, MCP reads, write coordination,
 watching, and application startup.

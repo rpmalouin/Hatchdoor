@@ -51,8 +51,6 @@ pub fn source_commits(source: &VaultSource) -> bool {
         VaultSource::ExistingGit { mode, .. } | VaultSource::ManagedGit { mode, .. } => {
             matches!(mode, VaultGitMode::LocalHistory | VaultGitMode::TwoWay)
         }
-        // A WebDAV source is not Git at all: it has no commit turn.
-        VaultSource::WebDav { .. } => false,
     }
 }
 
@@ -65,8 +63,5 @@ pub fn source_syncs_remote(source: &VaultSource) -> bool {
         VaultSource::ExistingGit { mode, .. } | VaultSource::ManagedGit { mode, .. } => {
             matches!(mode, VaultGitMode::PullOnly | VaultGitMode::TwoWay)
         }
-        // A WebDAV source syncs through its own WebDAV turn, never the Git
-        // scheduler or the git sync/retry handlers.
-        VaultSource::WebDav { .. } => false,
     }
 }

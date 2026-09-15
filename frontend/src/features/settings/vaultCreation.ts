@@ -17,16 +17,14 @@ import {
 /** The top-level creation choice: a folder this server already has on disk
  * (which `buildSourceForBehavior` — reused unchanged from the edit flow —
  * turns into `local` or `existing_git` depending on the chosen Git
- * behaviour), a fresh clone Hatchdoor manages itself, or a WebDAV endpoint
- * Hatchdoor keeps in sync as a local mirror. */
-export type CreateVaultKind = "own" | "managed" | "webdav";
+ * behaviour), or a fresh clone Hatchdoor manages itself. */
+export type CreateVaultKind = "own" | "managed";
 
 /** The starting point `buildSourceForBehavior`/`withIdentityFields` (both
  * reused from `vaultGitBehavior.ts`) then transform as the form's behaviour
  * and identity fields are edited — the same two-step composition the edit
  * flow already uses, just starting from an empty source instead of an
- * existing Vault's. A WebDAV kind returns a `webdav` source directly (no Git
- * behaviour; the sync schedule is carried on the source). */
+ * existing Vault's. */
 export function baseSourceForKind(
   kind: CreateVaultKind,
   path: string,
@@ -38,14 +36,6 @@ export function baseSourceForKind(
       branch: undefined,
       vault_subdirectory: undefined,
       mode: "pull_only",
-      poll_interval_secs: DEFAULT_POLL_MINUTES * 60,
-    };
-  }
-  if (kind === "webdav") {
-    return {
-      type: "webdav",
-      url: "",
-      vault_subdirectory: undefined,
       poll_interval_secs: DEFAULT_POLL_MINUTES * 60,
     };
   }
@@ -62,8 +52,6 @@ export function validateCreateSource(source: VaultSource): string | null {
     return source.path.trim() ? null : "Enter the folder path.";
   if (source.type === "existing_git" && !source.repository_path.trim())
     return "Enter the folder path.";
-  if (source.type === "webdav" && !source.url.trim())
-    return "Enter the WebDAV URL.";
   if (missingRequiredRepositoryUrl(source))
     return REPOSITORY_URL_REQUIRED_MESSAGE;
   return null;

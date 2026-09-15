@@ -47,7 +47,6 @@ use crate::mcp::{HatchdoorMcpTransport, McpConfig};
 use crate::model_setup::{ModelSetup, SelectedModel};
 use crate::runtime_config::{RuntimeConfig, live_settings_defaults, settings_file_path};
 use crate::startup::StartupTracker;
-use crate::vault::remote::{WEBDAV_TICK_INTERVAL, WebDavScheduler, spawn_webdav_tick};
 use crate::vault_executor::VaultWorkExecutor;
 use crate::vault_migration::{LegacyMigrationInput, LegacyMigrationOutcome, migrate_legacy_vault};
 use crate::vault_registry::{VaultRegistryState, VaultRegistryStore};
@@ -214,8 +213,7 @@ pub fn check_demo_mode_registry_posture(
         let mode = match definition.source() {
             crate::vault_registry::VaultSource::ExistingGit { mode, .. }
             | crate::vault_registry::VaultSource::ManagedGit { mode, .. } => Some(*mode),
-            crate::vault_registry::VaultSource::Local { .. }
-            | crate::vault_registry::VaultSource::WebDav { .. } => None,
+            crate::vault_registry::VaultSource::Local { .. } => None,
         };
         if mode == Some(crate::vault_registry::VaultGitMode::TwoWay) {
             return Err(format!(
@@ -1112,7 +1110,6 @@ pub async fn run_server() {
             ),
         ),
     ));
-    let webdav = Arc::new(WebDavScheduler::new(vault_work.clone()));
     match (&registry_state, legacy_migration_recovery.as_ref()) {
         (_, Some(recovery)) => warn!(
             code = recovery.code(),
@@ -1120,7 +1117,7 @@ pub async fn run_server() {
         ),
         (VaultRegistryState::Ready(snapshot), None) => {
             vaults
-                .reconcile_and_reconstruct(&vault_registry, snapshot, &vault_work, &managed_git, &webdav)
+                .reconcile_and_reconstruct(&vault_registry, snapshot, &vault_work, &managed_git)
                 .await
         }
         (VaultRegistryState::Recovery(recovery), None) => warn!(
@@ -1147,7 +1144,6 @@ pub async fn run_server() {
         vaults,
         vault_work: vault_work.clone(),
         managed_git: managed_git.clone(),
-        webdav: webdav.clone(),
         commit_cooldown: commit_cooldown.clone(),
         legacy_migration_recovery: Arc::new(std::sync::RwLock::new(legacy_migration_recovery)),
         startup_sqlite: sqlite.clone(),
@@ -1203,7 +1199,6 @@ pub async fn run_server() {
     });
     let scheduler_tick_task =
         crate::git::spawn_scheduler_tick(managed_git.clone(), crate::git::DEFAULT_TICK_INTERVAL);
-    let webdav_tick_task = spawn_webdav_tick(webdav.clone(), WEBDAV_TICK_INTERVAL);
     // Lets a Vault whose commit failed resume committing on its own once its
     // cooldown elapses, instead of waiting for the operator's next save.
     let commit_cooldown_tick_task = crate::git::spawn_commit_cooldown_tick(
@@ -1257,7 +1252,6 @@ pub async fn run_server() {
     // coordinator has stopped accepting work; the dispatch loop drains and
     // exits on its own now that `shutdown()` above reached quiescence.
     scheduler_tick_task.abort();
-    webdav_tick_task.abort();
     commit_cooldown_tick_task.abort();
     if let Some(task) = watcher_index_task {
         task.abort();
@@ -1851,7 +1845,6 @@ mod tests {
             vaults: VaultCollectionRuntime::new(),
             vault_work: vault_work.clone(),
             managed_git,
-            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             commit_cooldown: Arc::new(crate::git::CommitCooldown::new()),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: sqlite,
@@ -1934,7 +1927,6 @@ mod tests {
             vaults: VaultCollectionRuntime::new(),
             vault_work: vault_work.clone(),
             managed_git,
-            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             commit_cooldown: Arc::new(crate::git::CommitCooldown::new()),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: sqlite,
@@ -4724,7 +4716,7 @@ mod tests {
                 &state.vault_registry,
                 &snapshot,
                 &state.vault_work,
-                &state.managed_git, &state.webdav,
+                &state.managed_git,
             )
             .await;
         let vault_id = snapshot.vault_ids().next().expect("one vault id");
@@ -4832,7 +4824,7 @@ mod tests {
                     &state.vault_registry,
                     &snapshot,
                     &state.vault_work,
-                    &state.managed_git, &state.webdav,
+                    &state.managed_git,
                 )
                 .await;
         }
@@ -5184,7 +5176,6 @@ mod tests {
                 &snapshot,
                 &state.vault_work,
                 &state.managed_git,
-                &crate::vault::remote::WebDavScheduler::new(state.vault_work.clone()),
             )
             .await;
 
@@ -5329,7 +5320,7 @@ mod tests {
                 &state.vault_registry,
                 &snapshot,
                 &state.vault_work,
-                &state.managed_git, &state.webdav,
+                &state.managed_git,
             )
             .await;
         let vault_id = snapshot.vault_ids().next().expect("one vault id");
@@ -5897,7 +5888,7 @@ mod tests {
                 &state.vault_registry,
                 &unavailable_snapshot,
                 &state.vault_work,
-                &state.managed_git, &state.webdav,
+                &state.managed_git,
             )
             .await;
         let unavailable_id = unavailable_snapshot.vault_ids().next().expect("vault id");
@@ -5943,7 +5934,7 @@ mod tests {
                 &state.vault_registry,
                 &disabled_snapshot,
                 &state.vault_work,
-                &state.managed_git, &state.webdav,
+                &state.managed_git,
             )
             .await;
         let disabled = app
@@ -5986,7 +5977,7 @@ mod tests {
                 &state.vault_registry,
                 &available_snapshot,
                 &state.vault_work,
-                &state.managed_git, &state.webdav,
+                &state.managed_git,
             )
             .await;
         let available_id = available_snapshot
@@ -6390,7 +6381,7 @@ mod tests {
                         &state.vault_registry,
                         &snapshot,
                         &state.vault_work,
-                        &state.managed_git, &state.webdav,
+                        &state.managed_git,
                     )
                     .await;
             }

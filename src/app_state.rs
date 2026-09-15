@@ -31,10 +31,6 @@ pub struct AppState {
     /// watcher-forwarding path asks it whether a change may request a commit
     /// and the Vault work executor is what arms and clears it (#267).
     pub commit_cooldown: Arc<crate::git::CommitCooldown>,
-    /// Per-Vault WebDAV sync-turn scheduler (the WebDAV equivalent of
-    /// `managed_git`, kept deliberately separate: WebDAV is NOT git and never
-    /// routes through the Git scheduler or the git sync/retry handlers).
-    pub webdav: Arc<crate::vault::remote::WebDavScheduler>,
     /// Present when safe automatic import could not prove the legacy
     /// deployment. Collection/setup surfaces remain available for recovery.
     /// Cleared by a confirmed "Start with no Vaults"

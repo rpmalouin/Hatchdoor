@@ -172,14 +172,8 @@ export function VaultSettingsIndex({
 
 function draftsFromSource(source: VaultSource | undefined) {
   const behavior = source ? behaviorOf(source) : null;
-  // WebDAV uses `url` where Git sources use `repository_url`, and has no
-  // branch. Map both into the same draft fields so the edit form re-fills.
   const repoUrl =
-    source && source.type !== "local"
-      ? source.type === "webdav"
-        ? (source.url ?? "")
-        : (source.repository_url ?? "")
-      : "";
+    source && source.type !== "local" ? (source.repository_url ?? "") : "";
   const branch =
     (source && source.type === "existing_git") ||
     (source && source.type === "managed_git")

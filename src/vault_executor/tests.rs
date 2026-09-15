@@ -178,7 +178,7 @@ async fn index_turn_publishes_one_vault_and_a_failure_keeps_its_snapshot_stale()
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::without_durable_state(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git, &crate::vault::remote::WebDavScheduler::new(coordinator.clone()))
+        .reconcile_and_reconstruct(&registry, &both, &coordinator, &managed_git)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let working: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -334,7 +334,7 @@ async fn index_turn_defers_while_the_embedding_model_is_still_being_set_up() {
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::without_durable_state(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &crate::vault::remote::WebDavScheduler::new(coordinator.clone()))
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
         .await;
 
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
@@ -406,7 +406,7 @@ async fn index_turn_with_embed_layers_disabled_keeps_demoted_notes_keyword_only(
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::without_durable_state(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &crate::vault::remote::WebDavScheduler::new(coordinator.clone()))
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -492,7 +492,7 @@ async fn index_turn_waits_for_a_multifile_foreground_mutation_before_publishing(
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::without_durable_state(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &crate::vault::remote::WebDavScheduler::new(coordinator.clone()))
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
         .await;
     let control = collection.runtime(vault_id).expect("active Vault runtime");
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
@@ -611,7 +611,7 @@ async fn active_index_turn_reports_the_retained_snapshot_stale_to_concurrent_rea
     let (coordinator, mut worker) = VaultWorkCoordinator::new();
     let managed_git = ManagedGitScheduler::without_durable_state(coordinator.clone());
     collection
-        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &crate::vault::remote::WebDavScheduler::new(coordinator.clone()))
+        .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let working: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -776,7 +776,7 @@ impl EmbeddingTurnFixture {
         let (coordinator, mut worker) = VaultWorkCoordinator::new();
         let managed_git = ManagedGitScheduler::without_durable_state(coordinator.clone());
         collection
-            .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git, &crate::vault::remote::WebDavScheduler::new(coordinator.clone()))
+            .reconcile_and_reconstruct(&registry, &snapshot, &coordinator, &managed_git)
             .await;
         let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
         let working: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -2008,7 +2008,7 @@ async fn each_index_turn_binds_the_settings_snapshot_at_its_own_start() {
     let (work, mut worker) = VaultWorkCoordinator::new();
     let managed_git = Arc::new(ManagedGitScheduler::without_durable_state(work.clone()));
     vaults
-        .reconcile_and_reconstruct(&registry, &snapshot, &work, &managed_git, &crate::vault::remote::WebDavScheduler::new(work.clone()))
+        .reconcile_and_reconstruct(&registry, &snapshot, &work, &managed_git)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -2022,7 +2022,6 @@ async fn each_index_turn_binds_the_settings_snapshot_at_its_own_start() {
         registry: registry.clone(),
         work: work.clone(),
         managed_git: managed_git.clone(),
-        webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(work.clone())),
         commit_cooldown: Arc::new(crate::git::CommitCooldown::new()),
         cache: cache.clone(),
         embedder: embedder.clone(),
@@ -2124,7 +2123,7 @@ async fn publish_outcome_moves_startup_readiness_with_the_collections_index_turn
     let (work, mut worker) = VaultWorkCoordinator::new();
     let managed_git = Arc::new(ManagedGitScheduler::without_durable_state(work.clone()));
     vaults
-        .reconcile_and_reconstruct(&registry, &committed, &work, &managed_git, &crate::vault::remote::WebDavScheduler::new(work.clone()))
+        .reconcile_and_reconstruct(&registry, &committed, &work, &managed_git)
         .await;
     let cache = Arc::new(SqliteCache::in_memory(384).expect("open shared cache"));
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(384));
@@ -2134,7 +2133,6 @@ async fn publish_outcome_moves_startup_readiness_with_the_collections_index_turn
         registry: registry.clone(),
         work: work.clone(),
         managed_git: managed_git.clone(),
-        webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(work.clone())),
         commit_cooldown: Arc::new(crate::git::CommitCooldown::new()),
         cache: cache.clone(),
         embedder,

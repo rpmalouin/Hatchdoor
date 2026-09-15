@@ -17,15 +17,14 @@
 
 > **This is `rpmalouin/Hatchdoor`, a fork.** It tracks upstream
 > [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor) — currently
-> **v2.6.1** (merge `4e568cc`) — and carries
-> a small, documented set of deltas on top: a dependency security-hardening
-> commit, native WebDAV vault support (whose sync engine reconciles remote
-> edits and deletions instead of only pulling additions), and fuse-vault
-> write/index resilience (see [`FORK.md`](FORK.md)). The reference deployment of
-> this fork is the **gdrive build**: a Google Drive vault
-> (`gdrive:MyObsidian`) served to Hatchdoor through an `rclone-webdav` sidecar,
-> synced into a local mirror, and exposed to AI agents over MCP. The code and
-> the `battermanz/hatchdoor` Docker image are otherwise unchanged.
+> **v2.6.1** (merge `4e568cc`) — and carries a small, documented set of deltas on top:
+> a dependency security-hardening commit and fuse-vault write/index resilience (see
+> [`FORK.md`](FORK.md)). An earlier **WebDAV vault source** — added so a Google Drive
+> vault could be attached through an `rclone serve webdav` sidecar — has been **removed**:
+> the reference deployment now attaches its vault over a host-mounted SMB share as a plain
+> `Local` source, which needs no fork code at all, so the delta only cost effort on every
+> upstream merge (`FORK.md` → *Removal of the WebDAV vault source*). The rest of the code
+> and the `battermanz/hatchdoor` Docker image are otherwise unchanged.
 
 > **Hermes integration:** this fork ships with a complete, verified playbook for
 > wiring Hatchdoor's MCP server into [Hermes Agent](https://hermes-agent.nousresearch.com) —
@@ -33,10 +32,10 @@
 > hatchdoor-only access enforcement, a vault-only role agent, and drift
 > detection. See [`HERMES.md`](HERMES.md).
 
-> **Google Drive vault:** the live deployment runs the WebDAV source against a
-> Google Drive remote. The container stack (`hatchdoor` + `rclone-webdav`
-> sidecar) and the MCP wiring that makes agents read/write that vault are
-> documented in [`FORK.md`](FORK.md) → *The gdrive build*.
+> **Vault source:** any local Markdown directory works, including a network share the
+> host has already mounted — the reference deployment mounts its vault over SMB and binds
+> that path into the container (`FORK.md` → *The reference deployment*). MCP wiring that
+> lets agents read and write that vault is in [`HERMES.md`](HERMES.md).
 
 Hatchdoor is a self-hosted, **agent-native** web app for your Obsidian-style
 Markdown vault. Browse, search, and edit your notes in a fast web UI, and give

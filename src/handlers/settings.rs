@@ -521,9 +521,6 @@ mod tests {
             vault_work: vault_work.clone(),
             managed_git,
             commit_cooldown: Arc::new(crate::git::CommitCooldown::new()),
-            webdav: std::sync::Arc::new(crate::vault::remote::WebDavScheduler::new(
-                vault_work.clone(),
-            )),
             legacy_migration_recovery: std::sync::Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: std::sync::Arc::new(
                 crate::cache::SqliteCache::in_memory(384).expect("in-memory cache"),
@@ -589,7 +586,6 @@ mod tests {
                 &snapshot,
                 &state.vault_work,
                 &state.managed_git,
-                &crate::vault::remote::WebDavScheduler::new(state.vault_work.clone()),
             )
             .await;
         snapshot

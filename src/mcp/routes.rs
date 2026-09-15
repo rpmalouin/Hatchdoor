@@ -332,7 +332,6 @@ mod tests {
             vault_work: vault_work.clone(),
             managed_git,
             commit_cooldown: Arc::new(crate::git::CommitCooldown::new()),
-            webdav: Arc::new(crate::vault::remote::WebDavScheduler::new(vault_work.clone())),
             legacy_migration_recovery: Arc::new(std::sync::RwLock::new(None)),
             startup_sqlite: sqlite,
             mcp_tools_changed,

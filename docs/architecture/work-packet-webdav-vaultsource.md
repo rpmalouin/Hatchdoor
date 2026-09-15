@@ -1,6 +1,16 @@
 # WORK PACKET — WebDAV VaultSource for Hatchdoor
 
-Status: DRAFT — for review before shared-file changes.
+> [!WARNING] **SUPERSEDED — the feature described here was removed.**
+> The fork no longer contains a `VaultSource::WebDav`: the client, the mirror sync
+> engine, the sync-turn scheduler, the settings UI option and the tests were all
+> deleted, because the deployment that motivated them now attaches its vault over a
+> host-mounted SMB share as a plain `Local` source (`FORK.md` → *Removal of the WebDAV
+> vault source*; `CHANGELOG.md` → Unreleased). This document is kept as the design
+> record of what was built and why — useful if an RFC-4918 vault source is ever wanted
+> again, or to understand the mirror/scheduler architecture the fork carried for a
+> while. Nothing below describes the current code.
+
+Status: SUPERSEDED (was DRAFT — for review before shared-file changes).
 Author: rpmalouin fork. Repo: /appdata/Hatchdoor.
 Related: FORK.md (fork delta), ADR-01/03/10/11 (constraints).
 

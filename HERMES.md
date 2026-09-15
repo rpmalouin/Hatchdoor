@@ -221,10 +221,9 @@ gateway is running pre-update modules ("mixed sys.modules", reported by
 
 ## 8. Fork fixes and rebuild (hatchdoor:local)
 
-The fork `/appdata/Hatchdoor` carries the WebDAV deltas that make the gdrive
-build work (commits `02dd552`, `5443413`, `f13441c`, `f3dd537` — WebDAV
-VaultSource, wiring, sync-turn scheduler, activation publish) plus `cecadd1`,
-two fixes the WebDAV-mirror write path requires:
+The fork `/appdata/Hatchdoor` is now a thin delta over upstream: a dependency
+security-hardening commit plus `cecadd1`'s two fuse-vault write/index fixes —
+which is exactly what a vault served from a mounted network share needs:
 
 - `rename_exchange` (src/vault/write/fs_ops.rs) falls back to a three-rename
   emulation when `renameat2(RENAME_EXCHANGE)` is unsupported
@@ -235,11 +234,12 @@ two fixes the WebDAV-mirror write path requires:
   (5-6x `_Inbox`/`_Areas`/`Home` basenames) no longer abort the index build
   with `UNIQUE constraint failed: notes.slug`.
 
-Since the merge commit `4e568cc` the fork tracks **upstream v2.6.1**; the deltas
-above are re-integrated into upstream's newer structure (the WebDAV scheduler is
-spawned and aborted in server startup/shutdown, per-Vault poll intervals activate
-and deactivate in `vault_runtime`, and a WebDAV vault still never takes a git
-turn). Rebuild procedure (source repo: `/appdata/Hatchdoor`, stack:
+Since the merge commit `4e568cc` the fork tracks **upstream v2.6.1**, and the
+deltas above are re-integrated into upstream's newer structure on each merge.
+(Historical note: the WebDAV deltas used to need the same treatment — a scheduler
+spawned/aborted in server startup, per-Vault poll activation in `vault_runtime`, a
+"not git" arm — which is the merge cost that motivated removing the feature, below.)
+Rebuild procedure (source repo: `/appdata/Hatchdoor`, stack:
 `/appdata/A--docker_stacks/Hatchdoor`):
 
 ```

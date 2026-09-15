@@ -3,9 +3,7 @@
 .env
 .env.*
 
-# rclone config for the gdrive build — holds the Drive OAuth token; never part
-# of the image context (the rclone-webdav sidecar mounts it at runtime).
-rclone
+# (no rclone config is needed any more — the WebDAV sidecar was removed)
 
 target
 tmp
