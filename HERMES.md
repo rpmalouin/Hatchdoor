@@ -25,7 +25,10 @@ Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
   Mac immediately, and deletes land in `.hatchdoor-trash/` inside the vault. The
   retired WebDAV path (`rclone-webdav` sidecar, `WEBDAV_USER`/`WEBDAV_PASS`, the
   `0851e3e7-…` web_dav vault, its mirror under `<STATE>/vaults/`) is history as of
-  2026-09-15 — no Google OAuth token for the vault remains on this host. macOS SMB
+  2026-09-15 — no Google OAuth token for the vault remains on this host: the legacy
+  `${VAULT_PATH}:/data/vault` bind, the host `rclone-gdrive.service` fuse mount and both
+  rclone configs were retired the same day (parked under
+  `/appdata/_retired-hatchdoor-drive-20260915/` for a one-step restore). macOS SMB
   sends this client no change notifications, so a systemd timer re-indexes every five
   minutes (§12).
 - Server-side env gates (compose `.env`): `HATCHDOOR_MCP_ENABLED=true`,
