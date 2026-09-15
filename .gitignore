@@ -40,3 +40,21 @@ docs/superpowers/specs/2026-07-25-eval-query-set-design.md
 # Repo-local operator notes. MEMORY.md always stays local/untracked;
 # committed documentation lives in FORK.md (clean, no local information).
 MEMORY.md
+
+# Machine-local agent tooling: the per-CLI instruction shims and MCP config the
+# code-review-graph installer drops in the repo. Authoring artifacts for this
+# machine, not part of the project — AGENTS.md is the committed, shared version
+# of these rules.
+.cursorrules
+.windsurfrules
+CLAUDE.md
+CODEBUDDY.md
+GEMINI.md
+QODER.md
+opencode.jsonc
+.mcp.json
+.codebuddy/
+.gemini/
+.kiro/
+.qoder/
+.github/code-review-graph.instruction.md
