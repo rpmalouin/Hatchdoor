@@ -4,9 +4,10 @@
 
 `rpmalouin/Hatchdoor` is a fork of [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor).
 It tracks upstream `main` and carries a small, documented set of deltas on top:
-a dependency security-hardening commit, native WebDAV vault support (which this
-deployment uses to serve a **Google Drive vault**), and fuse-vault resilience.
-Each delta is listed below; everything else tracks upstream unchanged.
+a dependency security-hardening commit, native WebDAV vault support with a
+reconciling sync engine (which this deployment uses to serve a **Google Drive
+vault**), and fuse-vault resilience. Each delta is listed below; everything else
+tracks upstream unchanged.
 
 ## Delta over upstream
 
@@ -39,6 +40,9 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `a08bde2` | `docs(hermes)`: write the raw MCP probe's token variable as `<VAR>` (no `$`), which the context-file scanner otherwise blocks |
 | `f5c5da4` | `docs(hermes)`: document cron alerting, correct the drift-job spec, list unlisted deltas |
 | `4e568cc` | `chore(merge)`: merge upstream v2.6.1 into the fork (176 commits); 12 conflicted files resolved, all WebDAV deltas preserved (see below) |
+| `3594683` | `docs`: record the upstream v2.6.1 merge (fork base, deltas, gates, sync procedure) |
+| `d6d1f05` | `fix(webdav)`: publish local edits to notes the remote still lists (see below) |
+| `85b4f19` | `fix(webdav)`: never heal a copy written in the same second as the last sync |
 
 ### Details of the upstream merge (`4e568cc`)
 
@@ -168,6 +172,40 @@ Verified: 9 new unit tests in `sync.rs`; 852 total tests pass in the Docker
 test image; live-verified on the gdrive build — a folder deleted in Obsidian
 stays deleted on gdrive across sync turns (no resurrection), the mirror drops
 the stale tree on the next turn, and edited notes refresh in the mirror.
+
+### Details of the sync publish/heal commits (`d6d1f05`, `85b4f19`)
+
+The reconciliation engine (`faaa77e`) only ever uploaded mirror files the remote did *not*
+list, so a local edit to a note that already existed on the remote was stranded: its stored
+remote fingerprint was unchanged, so nothing refreshed it, and it was not local-only, so
+nothing pushed it. On the gdrive deployment six notes written by a documentation pass sat that
+way — present in the mirror and the index, invisible to Drive and Obsidian — while every turn
+logged `pushed=0` and looked converged. A local copy that had gone stale behind an unchanged
+fingerprint was equally stuck.
+
+`d6d1f05` decides a both-sides file whose remote fingerprint is unchanged per file
+(`both_sides_action` in `src/vault/remote/sync.rs`):
+
+- **push** when the mirror copy was modified after the last successful turn
+  (`mtime > last_sync_at`) — the push rule the module doc always claimed, now applied to files
+  the remote still lists instead of only to local-only files;
+- **heal** when the copy was not modified since that turn but its bytes do not have the
+  remote's size — a stale or partial copy, which the fingerprint gate can never see;
+- otherwise leave the file alone.
+
+`85b4f19` closes the window the heal arm opened: comparisons are strict on both sides, so a
+copy whose mtime falls in the *same whole second* as the last turn's completion decides nothing
+(no push, no heal). Such a copy is indistinguishable from a write that landed as the turn
+finished, and healing it would silently revert that write — observed live, an MCP write
+completed 28 ms after the turn that recorded `last_sync_at`, inside the same second.
+
+Gates: `cargo check`, `cargo check --tests`, `node scripts/check-module-map.mjs` (213
+production files owned), and the `Dockerfile.test` suite — **1123 + 5 tests, 0 failed** on both
+commits. Deployed as `hatchdoor:local` with only the `hatchdoor` service recreated
+(`hatchdoor:local-pre-d6d1f05` kept for rollback). Live verification: a stranded note was
+pushed to Drive by the next turn (`pushed=1`), the three vault documentation notes followed
+(`pushed=2`, plus the one-time refresh after a push), and the mirror, the Drive copy and the
+fuse mount then agreed byte-for-byte on all 879 files.
 
 ### Details of the fuse resilience commit (`cecadd1`)
 
