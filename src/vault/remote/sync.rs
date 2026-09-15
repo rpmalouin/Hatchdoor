@@ -492,9 +492,13 @@ enum BothSidesAction {
 /// The mtime arm implements the documented push rule ("a local file Hatchdoor
 /// modified since the last successful sync turn is uploaded") for files the
 /// remote still lists; the size arm keeps a stale mirror copy from surviving
-/// forever behind an unchanged fingerprint. An unreadable local file reports
-/// `mtime 0` from the caller, which is never newer than the last sync, so it
-/// can only be healed — never pushed.
+/// forever behind an unchanged fingerprint. Comparisons are strict on both
+/// sides: a copy whose mtime falls in the SAME second as the last turn's
+/// completion is neither pushed nor healed (`None`), because the two are then
+/// indistinguishable — and healing there would silently revert a write that
+/// landed as the turn finished. An unreadable local file reports `mtime 0`
+/// from the caller, which is never newer than the last sync, so it can only be
+/// healed — never pushed.
 fn both_sides_action(
     local_len: u64,
     local_mtime_unix: u64,
@@ -503,7 +507,7 @@ fn both_sides_action(
 ) -> BothSidesAction {
     if is_new_since_last_sync(local_mtime_unix, last_sync_at_unix) {
         BothSidesAction::Push
-    } else if local_len != remote_len {
+    } else if local_mtime_unix < last_sync_at_unix && local_len != remote_len {
         BothSidesAction::Heal
     } else {
         BothSidesAction::None
@@ -669,9 +673,12 @@ mod tests {
             both_sides_action(7, last_sync - 1, 10, last_sync),
             BothSidesAction::Heal
         );
+        // Same whole second as the last turn's completion: that is
+        // indistinguishable from a write that landed as the turn finished, so
+        // the copy is left alone instead of being healed over.
         assert_eq!(
             both_sides_action(12, last_sync, 10, last_sync),
-            BothSidesAction::Heal
+            BothSidesAction::None
         );
         // Unreadable local metadata (the caller passes mtime 0): never pushed.
         assert_eq!(
