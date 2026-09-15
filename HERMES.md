@@ -14,17 +14,20 @@ Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
 
 - Container `hatchdoor` (image `hatchdoor:local`, built from the fork at
   `/appdata/Hatchdoor`), HTTP on port 42824, MCP route `http://127.0.0.1:42824/mcp`.
-- The vault is a **Google Drive vault** (`gdrive:MyObsidian`) served to
-  Hatchdoor by the `rclone-webdav` sidecar container (rclone `serve webdav`
-  on `:42825`, creds `WEBDAV_USER`/`WEBDAV_PASS` from the stack `.env`).
-  Hatchdoor registers it as a `web_dav` source
-  (`url: http://rclone-webdav:42825`, `poll_interval_secs: 300`, vault id
-  `0851e3e7-2daf-4e73-aff2-f074f282c5c6`) and syncs it to a **local mirror** at
-  `<STATE>/vaults/<id>/webdav` (container `/data/state/vaults/<id>/webdav`).
-  Reads/writes hit the mirror; the Drive remote is only touched through the
-  WebDAV sidecar. Hatchdoor owns mirror consistency — never touch the remote
-  or the mirror directly. (The old `/data/vault` fuse bind and `/mnt/gdrive`
-  mount are legacy; the active vault path is the WebDAV mirror.)
+- The vault is the **real Obsidian vault on the Mac Mini**, reached over SMB — no
+  WebDAV, no rclone, no mirror. `/etc/fstab` mounts `//10.1.10.75/Data` at
+  `/mnt/obsidian-vault` (cifs, `credentials=/etc/mac-smb-credentials` (0600),
+  `uid=65532,gid=65532,noperm,file_mode=0770,dir_mode=0770,soft,_netdev,nofail`), and
+  the stack binds `Google Drive/MyObsidian` from it into the container as
+  `/data/smb-vault` (`SMB_VAULT_PATH` in the stack `.env`). Hatchdoor registers it as a
+  `local` source (vault id `15b3a89e-80eb-4e1a-a5c8-ddfec68b00b7`, name `vault`) and
+  reads/writes those files in place: a write through MCP is visible in Obsidian on the
+  Mac immediately, and deletes land in `.hatchdoor-trash/` inside the vault. The
+  retired WebDAV path (`rclone-webdav` sidecar, `WEBDAV_USER`/`WEBDAV_PASS`, the
+  `0851e3e7-…` web_dav vault, its mirror under `<STATE>/vaults/`) is history as of
+  2026-09-15 — no Google OAuth token for the vault remains on this host. macOS SMB
+  sends this client no change notifications, so a systemd timer re-indexes every five
+  minutes (§12).
 - Server-side env gates (compose `.env`): `HATCHDOOR_MCP_ENABLED=true`,
   `HATCHDOOR_MCP_WRITE_ENABLED=true` (gates the write tools),
   `HATCHDOOR_MCP_BEARER_TOKEN`, `HATCHDOOR_MCP_ALLOWED_ORIGINS`.
@@ -352,3 +355,42 @@ Prove a lane end-to-end rather than trusting the config: create a throwaway
 `failure_deliver: "bot-chat"`, fire it, and watch for a
 `hermes chat -c Bot Chat --create-if-missing` process plus a new "Bot Chat"
 session. Remove the job and its script afterwards.
+
+## 12. Keeping the SMB-sourced vault fresh (systemd timer)
+
+macOS's SMB server delivers **no change notifications** to this Linux client —
+measured 2026-09-15 with a recursive inotify watch armed on all 253 directories of
+the mount: a round of Obsidian edits on the Mac produced 0 events, while an
+independent stat rescan saw the new sizes within ~4 s (positive control: a write made
+*through* the mount fired `MODIFY|CLOSE_WRITE` immediately, so the watches were
+correct). Hatchdoor's watcher is inotify-only (`notify::RecommendedWatcher` in
+`src/vault_watcher.rs`, no polling fallback), and a `Local` Vault has no periodic
+re-index of its own — `VaultWorkKind::Index` is requested only by the watcher, at
+startup, and by explicit API/MCP calls. Without a poll, the note tree and search go
+stale on the first Mac-side edit, even though note *content* reads stay correct
+(ADR-01 re-scan).
+
+Installed fix (host-side, not in the repo):
+
+- `/usr/local/bin/hatchdoor-vault-refresh` — reads the web bearer token from the stack
+  `.env` itself, verifies `/mnt/obsidian-vault` is mounted (mounting it from fstab when
+  it is not), then `POST /api/v1/vaults/<id>/refresh` for every enabled, active Vault.
+  202 = admitted to the index FIFO. It never prints a credential.
+- `/etc/systemd/system/hatchdoor-vault-refresh.{service,timer}` — `OnCalendar=*:0/5`,
+  `AccuracySec=30s`, `RandomizedDelaySec=20s`, enabled and running. One pass costs
+  ~41 ms of client CPU plus a sub-second scan of ~708 notes — cheaper *and* fresher
+  than the old WebDAV path (300 s poll + a ~4 min PROPFIND walk, ~8-11 min effective).
+
+Measured behaviour (2026-09-15): a note written through a **second** cifs mount of the
+same share (separate SMB session, so the container gets no event — the Mac-edits case)
+appeared in `get_tree`/`search_notes` within one tick (~5 min), and a delete through
+that same path dropped from the index on the next pass. Rate change: edit the timer's
+`OnCalendar` split, then `systemctl daemon-reload && systemctl restart
+hatchdoor-vault-refresh.timer`. Watch it with
+`journalctl -u hatchdoor-vault-refresh.service` and
+`docker logs hatchdoor | grep 'Search index ready'`.
+
+Pitfall: the index FIFO is shared across Vaults, so a long first index (a new Vault
+re-embeds everything — ~10 min for 708 notes / 2,328 chunks) delays a refresh request;
+the request is coalesced, not lost. Judge progress by the `Indexing: N of M notes`
+lines rather than by a missing `Search index ready`.

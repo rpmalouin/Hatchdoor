@@ -39,10 +39,12 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `2e9ba83` | `docs`: record gdrive-build operational caveats in FORK.md |
 | `a08bde2` | `docs(hermes)`: write the raw MCP probe's token variable as `<VAR>` (no `$`), which the context-file scanner otherwise blocks |
 | `f5c5da4` | `docs(hermes)`: document cron alerting, correct the drift-job spec, list unlisted deltas |
+| `4dae54a` | `docs(hermes)`: document how OpsBrain consumes the drift report, incl. the Z-timestamp trap |
 | `4e568cc` | `chore(merge)`: merge upstream v2.6.1 into the fork (176 commits); 12 conflicted files resolved, all WebDAV deltas preserved (see below) |
 | `3594683` | `docs`: record the upstream v2.6.1 merge (fork base, deltas, gates, sync procedure) |
 | `d6d1f05` | `fix(webdav)`: publish local edits to notes the remote still lists (see below) |
 | `85b4f19` | `fix(webdav)`: never heal a copy written in the same second as the last sync |
+| `e204450` | `docs`: record the WebDAV publish/heal deltas in FORK.md |
 
 ### Details of the upstream merge (`4e568cc`)
 
@@ -223,33 +225,32 @@ fuse-style mount where the stock Hatchdoor write/index paths fail:
 
 ## The gdrive build: how this fork serves a Google Drive vault
 
-This fork exists because the deployment vault lives on **Google Drive**, and
-Hatchdoor (stock or Docker Hub) cannot read it directly. Two pieces make it work:
-the container stack and the MCP surface.
+This fork exists because the deployment vault is edited on another machine, and
+Hatchdoor (stock or the Docker Hub image) could not attach it directly. The fork adds
+a native **WebDAV `VaultSource`** for that. Since 2026-09-15 the deployment uses the
+simpler shape instead — a plain **`Local` source over an SMB mount** of the same
+folder — which needs no fork code at all.
 
-### Container stack (what runs)
+### Deployment (what runs today)
 
-`/appdata/A--docker_stacks/Hatchdoor/docker-compose.yml` runs two containers:
+`/appdata/A--docker_stacks/Hatchdoor/docker-compose.yml` runs one container:
 
-1. **`hatchdoor`** (image `hatchdoor:local`, built from THIS fork — the
-   `build:` context is `/appdata/Hatchdoor`, so the WebDAV + fuse-resilience
-   deltas are baked in). HTTP on `:42824`, MCP on `/mcp`.
-2. **`rclone-webdav`** sidecar (`rclone/rclone:latest`): `rclone serve webdav
-   gdrive:MyObsidian` on `:42825`, credentials `WEBDAV_USER`/`WEBDAV_PASS` from
-   the stack `.env` (rclone config lives in `./rclone`). This is the Google
-   Drive front door: rclone talks to the Drive API over HTTPS; no fuse, no
-   `/mnt/gdrive` mount involved.
+1. **`hatchdoor`** (image `hatchdoor:local`, built from THIS fork — the `build:`
+   context is `/appdata/Hatchdoor`). HTTP on `:42824`, MCP on `/mcp`. The vault is
+   bound in from the Mac Mini over SMB (`SMB_VAULT_PATH` → `/data/smb-vault`).
 
-The vault is then registered in Hatchdoor as a **WebDAV source**
-(`list_vaults`: `source: { type: web_dav, url: http://rclone-webdav:42825,
-poll_interval_secs: 300 }`, vault id `0851e3e7-2daf-4e73-aff2-f074f282c5c6`).
-Hatchdoor's sync engine pulls the remote collection into a **local mirror** at
-`<STATE>/vaults/<id>/webdav` (container `/data/state/vaults/<id>/webdav`), and
-all reads/writes serve from that mirror — the Google Drive remote is only
-touched through the WebDAV sidecar. The scheduler commits (`f13441c`,
-`f3dd537`) are what make this flow automatic: activation arms a sync turn, the
-mirror is created, and the vault flips to `active` (browse + mutate + search)
-without any manual API call.
+The `rclone-webdav` sidecar that used to sit between Hatchdoor and Google Drive
+(`rclone serve webdav gdrive:MyObsidian`, `WEBDAV_USER`/`WEBDAV_PASS`, the
+`web_dav` vault `0851e3e7-…` and its local mirror) was retired on 2026-09-15. The
+Mac's own Drive folder is the same content, exported over SMB by macOS, and mounting
+it directly removes the sidecar, the mirror, the Google OAuth token on this host, and
+the per-directory PROPFIND walk (which cost minutes per sync turn). Hatchdoor now
+registers that folder as `source: { type: local, path: /data/smb-vault }` — 708 notes,
+read and written in place — and a host systemd timer re-indexes every 5 minutes,
+because macOS SMB delivers this client no change notifications. The fork's WebDAV
+code stays available (it is what makes an RFC-4918 endpoint a first-class source, and
+the scheduler commits `f13441c`/`f3dd537` are what made it automatic), but this
+deployment no longer exercises it.
 
 ### MCP (what agents see)
 
