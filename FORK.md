@@ -48,6 +48,7 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `d6d1f05` | `fix(webdav)`: publish local edits to notes the remote still lists (see below) |
 | `85b4f19` | `fix(webdav)`: never heal a copy written in the same second as the last sync |
 | `e204450` | `docs`: record the WebDAV publish/heal deltas in FORK.md |
+| `9d8f6e7` | `feat!`: remove the WebDAV vault source (client, sync engine, scheduler, settings UI, tests) — the deployment serves a Local source over SMB now (see below) |
 
 ## Removal of the WebDAV vault source
 
