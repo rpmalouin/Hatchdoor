@@ -24,6 +24,17 @@
   `.hatchdoor/` was added to the built-in noise-exclusion patterns so the
   sidecar never wakes the vault watcher. Sync turn outcomes are logged at info
   (`pulled/refreshed/pushed/deleted/created_dirs/errors`).
+
+- **A local edit to a note that already exists on the remote is published again.**
+  The reconciliation pass above only ever uploaded mirror files the remote did not
+  list, so a note edited after the previous sync turn stayed stranded: its remote
+  fingerprint had not changed, so nothing refreshed it, and it was not missing
+  remotely, so nothing pushed it. The turn now decides per file — a mirror copy
+  Hatchdoor modified since the last successful turn (`mtime > last_sync_at`) is
+  uploaded, and a mirror copy left untouched since then whose bytes do not have the
+  remote's size is re-downloaded as stale. On the Drive vault this had stranded six
+  notes written by the 2026-09-14 documentation pass, plus one truncated local copy.
+
 ## v2.6.1 - 2026-09-08
 
 The follow-up release, and there is nothing new to learn in it. These are the fixes that came out of running v2.6.0 in earnest, plus one tool that should never have gone missing. Vaults that were quietly not committing your notes now commit them. Links inside tables, and links a note makes to itself, stop breaking on rename. The editor puts the caret where you clicked, and `query_notes` is back.

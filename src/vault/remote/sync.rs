@@ -13,10 +13,18 @@
 //! - **Delete:** a file or dir present in the mirror but no longer listed on
 //!   the remote is a stale remnant of a remote deletion and is removed from
 //!   the mirror — never re-uploaded.
-//! - **Restricted push:** only a local file that Hatchdoor itself created or
-//!   modified since the last successful sync turn (`mtime > last_sync_at`)
-//!   is uploaded (`PUT`). This engine is pull-side: remote `DELETE` is never
-//!   issued.
+//! - **Push:** a local file Hatchdoor itself modified since the last
+//!   successful sync turn (`mtime > last_sync_at`) is uploaded (`PUT`) —
+//!   whether or not the remote still lists that path. The both-sides arm
+//!   matters: without it a local edit to an existing note stayed stranded in
+//!   the mirror forever, because the remote fingerprint was unchanged and the
+//!   local-only pass never saw the path. Remote `DELETE` is never issued.
+//! - **Heal:** a file present on both sides with an unchanged remote
+//!   fingerprint that Hatchdoor did NOT modify since the last sync, whose
+//!   local bytes do not have the remote's size, is downloaded again — a stale
+//!   local copy (failed or partial write, untracked local mutation) would
+//!   otherwise never converge, because the fingerprint gate sees nothing to
+//!   refresh.
 //! - **404 tolerance:** a collection that answers 404 while the walk is in
 //!   flight is treated as empty (deleted); its local subtree is reconciled
 //!   away instead of aborting the turn.
@@ -226,6 +234,38 @@ impl Sync {
                     Err(error) if is_http_404(&error) => {}
                     Err(_) => lock_pass(&pass).outcome.errors += 1,
                 }
+            } else {
+                // Same remote fingerprint: the remote is not the newer side,
+                // but the mirror can still be out of step with it. Publish a
+                // local edit, heal a stale local copy, or leave it alone.
+                let local_len = fs::metadata(&local).map_or(entry.size, |meta| meta.len());
+                let local_mtime_unix = mtime_unix_secs(&local).unwrap_or(0);
+                let last_sync_at_unix = lock_pass(&pass).state.last_sync_at_unix;
+                match both_sides_action(
+                    local_len,
+                    local_mtime_unix,
+                    entry.size,
+                    last_sync_at_unix,
+                ) {
+                    BothSidesAction::Push => {
+                        Self::push_file(client, &rel, &local, pass.clone()).await;
+                    }
+                    BothSidesAction::Heal => {
+                        match Self::fetch_and_write(client, &rel, &local).await {
+                            Ok(()) => {
+                                let mut guard = lock_pass(&pass);
+                                guard.state.files.insert(rel.clone(), fingerprint_of(entry));
+                                guard.outcome.refreshed += 1;
+                            }
+                            // Deleted between listing and GET: keep the current
+                            // local copy; the next turn's local-only pass
+                            // decides its fate.
+                            Err(error) if is_http_404(&error) => {}
+                            Err(_) => lock_pass(&pass).outcome.errors += 1,
+                        }
+                    }
+                    BothSidesAction::None => {}
+                }
             }
         }
 
@@ -431,6 +471,45 @@ fn is_new_since_last_sync(mtime_unix: u64, last_sync_at_unix: u64) -> bool {
     mtime_unix > last_sync_at_unix
 }
 
+/// What a turn must do about a file that exists on both sides with an
+/// unchanged remote fingerprint (so the refresh gate has nothing to say).
+#[derive(Debug, PartialEq, Eq)]
+enum BothSidesAction {
+    /// In step: the mirror matches the remote closely enough.
+    None,
+    /// Upload the local bytes: Hatchdoor modified the file after the last
+    /// successful sync turn, so the mirror holds the newer side.
+    Push,
+    /// Download the remote bytes: the file was not modified locally since the
+    /// last successful turn, yet the local copy does not have the remote's
+    /// size — it is stale (a failed or partial write, or a local mutation
+    /// Hatchdoor did not make).
+    Heal,
+}
+
+/// Decide between publishing a local edit and healing a stale local copy.
+///
+/// The mtime arm implements the documented push rule ("a local file Hatchdoor
+/// modified since the last successful sync turn is uploaded") for files the
+/// remote still lists; the size arm keeps a stale mirror copy from surviving
+/// forever behind an unchanged fingerprint. An unreadable local file reports
+/// `mtime 0` from the caller, which is never newer than the last sync, so it
+/// can only be healed — never pushed.
+fn both_sides_action(
+    local_len: u64,
+    local_mtime_unix: u64,
+    remote_len: u64,
+    last_sync_at_unix: u64,
+) -> BothSidesAction {
+    if is_new_since_last_sync(local_mtime_unix, last_sync_at_unix) {
+        BothSidesAction::Push
+    } else if local_len != remote_len {
+        BothSidesAction::Heal
+    } else {
+        BothSidesAction::None
+    }
+}
+
 /// Direct ancestor collection rels of `file_rel`, shallowest first.
 fn ancestor_dirs(file_rel: &str) -> Vec<String> {
     let mut dirs = Vec::new();
@@ -561,6 +640,48 @@ mod tests {
         assert!(is_new_since_last_sync(11, 10));
         assert!(!is_new_since_last_sync(10, 10)); // equal: predates the last sync
         assert!(!is_new_since_last_sync(9, 10));
+    }
+
+    #[test]
+    fn both_sides_action_publishes_local_edits_and_heals_stale_copies() {
+        let last_sync = 1_000;
+        // A local edit after the last successful turn is published whether or
+        // not its size still matches the remote's.
+        assert_eq!(
+            both_sides_action(11, last_sync + 1, 10, last_sync),
+            BothSidesAction::Push
+        );
+        assert_eq!(
+            both_sides_action(10, last_sync + 1, 10, last_sync),
+            BothSidesAction::Push
+        );
+        // Not modified locally and the same size: nothing to do.
+        assert_eq!(
+            both_sides_action(10, last_sync - 1, 10, last_sync),
+            BothSidesAction::None
+        );
+        assert_eq!(
+            both_sides_action(10, last_sync, 10, last_sync),
+            BothSidesAction::None
+        );
+        // Not modified locally but the sizes differ: the local copy is stale.
+        assert_eq!(
+            both_sides_action(7, last_sync - 1, 10, last_sync),
+            BothSidesAction::Heal
+        );
+        assert_eq!(
+            both_sides_action(12, last_sync, 10, last_sync),
+            BothSidesAction::Heal
+        );
+        // Unreadable local metadata (the caller passes mtime 0): never pushed.
+        assert_eq!(
+            both_sides_action(10, 0, 10, last_sync),
+            BothSidesAction::None
+        );
+        assert_eq!(
+            both_sides_action(7, 0, 10, last_sync),
+            BothSidesAction::Heal
+        );
     }
 
     #[test]
