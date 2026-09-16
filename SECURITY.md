@@ -20,6 +20,24 @@ as sensitive:
 - If git sync is enabled, use a scoped HTTPS token and monitor
   `get_git_sync_status` for sync failures.
 
+## Documentation: host-specific values are omitted
+
+This repository is **public**, and its deployment documentation is written for that
+audience. Where the reference deployment's own values would otherwise appear, the docs use
+placeholders (`<repo>`, `<stack-dir>`, `<smb-mount>`, `<mac-mini-ip>`, `<mac-vault-dir>`,
+`<credentials-file>`, and similar), defined in the *Placeholders* note at the top of
+[`FORK.md`](FORK.md) and [`HERMES.md`](HERMES.md).
+
+That is deliberate, not missing information: **no credential value, LAN address, host
+directory layout, or vault content from a real deployment is published here.** Operator-
+specific values live with the operator — in the deployment's `.env`, its local notes, and
+its vault — never in this repository. A `pre-push` hook in the maintainer's clone enforces
+the same rule: it blocks a push whose added lines look like a token, password, private key,
+`Bearer` value, RFC1918 address, or credentials path.
+
+When reporting an issue that depends on such a value, describe the shape (which file, which
+setting) rather than the value.
+
 ## Reporting Vulnerabilities
 
 Open a private security advisory or contact the maintainer before publishing
