@@ -57,6 +57,8 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `667c4f8` | `chore`: commit AGENTS.md (conflict resolved) and ignore machine-local agent tooling |
 | `2e7ae5e` | `docs`: retire the gdrive fuse path in the records, backfill the delta table |
 | `65f6d15` | `docs`: repoint the vault records to the new SMB path (MyObsidian at the share root) |
+| `bc54bda` | `docs`: genericize host-specific identifiers (this repo is public) |
+| `288a5cc` | `docs(security)`: say why the deployment docs use placeholders |
 
 ## Removal of the WebDAV vault source
 
