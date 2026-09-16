@@ -18,8 +18,10 @@ Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
   WebDAV, no rclone, no mirror. `/etc/fstab` mounts `//10.1.10.75/Data` at
   `/mnt/obsidian-vault` (cifs, `credentials=/etc/mac-smb-credentials` (0600),
   `uid=65532,gid=65532,noperm,file_mode=0770,dir_mode=0770,soft,_netdev,nofail`), and
-  the stack binds `Google Drive/MyObsidian` from it into the container as
-  `/data/smb-vault` (`SMB_VAULT_PATH` in the stack `.env`). Hatchdoor registers it as a
+  the stack binds the vault's folder into the container as `/data/smb-vault`
+  (`SMB_VAULT_PATH` in the stack `.env` = `/mnt/obsidian-vault/MyObsidian`, the share
+  ROOT — it sat at `Google Drive/MyObsidian` until the Mac-side relocation of
+  2026-09-16). Hatchdoor registers it as a
   `local` source (vault id `15b3a89e-80eb-4e1a-a5c8-ddfec68b00b7`, name `vault`) and
   reads/writes those files in place: a write through MCP is visible in Obsidian on the
   Mac immediately, and deletes land in `.hatchdoor-trash/` inside the vault. The
@@ -384,7 +386,7 @@ Installed fix (host-side, not in the repo):
   202 = admitted to the index FIFO. It never prints a credential.
 - `/etc/systemd/system/hatchdoor-vault-refresh.{service,timer}` — `OnCalendar=*:0/5`,
   `AccuracySec=30s`, `RandomizedDelaySec=20s`, enabled and running. One pass costs
-  ~41 ms of client CPU plus a sub-second scan of ~708 notes — cheaper *and* fresher
+  ~41 ms of client CPU plus a sub-second scan of ~730 notes — cheaper *and* fresher
   than the old WebDAV path (300 s poll + a ~4 min PROPFIND walk, ~8-11 min effective).
 
 Measured behaviour (2026-09-15): a note written through a **second** cifs mount of the
@@ -397,6 +399,27 @@ hatchdoor-vault-refresh.timer`. Watch it with
 `docker logs hatchdoor | grep 'Search index ready'`.
 
 Pitfall: the index FIFO is shared across Vaults, so a long first index (a new Vault
-re-embeds everything — ~10 min for 708 notes / 2,328 chunks) delays a refresh request;
+re-embeds everything — ~10 min for 730 notes / 2,458 chunks, measured 10m01s after the
+2026-09-16 repoint) delays a refresh request;
 the request is coalesced, not lost. Judge progress by the `Indexing: N of M notes`
-lines rather than by a missing `Search index ready`.
+lines rather than by a missing `Search index ready`. Incremental passes are cheap
+(1 changed note → 24 chunks in ~6 s).
+
+### Repointing the vault folder (when the vault moves on the Mac)
+
+1. Set `SMB_VAULT_PATH` in the stack `.env` to the new folder inside the share.
+2. **Recreate** the container: `docker compose up -d` from the stack dir. A plain
+   `docker restart` keeps the OLD bind — the container comes up healthy and serves
+   the old path.
+3. The failure mode is silent: with a missing/empty bind target Hatchdoor logs no
+   error and reports `note_count: 0` while `search: ready`. Check `get_stats` for the
+   real count (this vault: ~730) instead of trusting the healthcheck.
+4. The repoint forces a full re-embed; `search` reads `indexing` and
+   `capabilities.search` stays `false` until it finishes (~10 min above). Reads of
+   note *content* work throughout.
+5. Verify the WRITE path, not only reads: `create_note` a throwaway note, confirm the
+   file appears under the new host path only, then `delete_note` (it lands in
+   `.hatchdoor-trash/`, which is normal — say so rather than hiding it).
+6. The Vault registry (`state/vaults.json`, `source: {type: local, path:
+   /data/smb-vault}`) needs no change: the container-side path is unchanged by a
+   host-side move.

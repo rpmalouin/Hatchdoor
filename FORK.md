@@ -283,15 +283,21 @@ fork code at all (*Removal of the WebDAV vault source* above).
 
 1. **`hatchdoor`** (image `hatchdoor:local`, built from THIS fork — the `build:`
    context is `/appdata/Hatchdoor`). HTTP on `:42824`, MCP on `/mcp`. The vault is
-   bound in from the Mac Mini over SMB (`SMB_VAULT_PATH` → `/data/smb-vault`).
+   bound in from the Mac Mini over SMB (`SMB_VAULT_PATH` → `/data/smb-vault`) — and
+   `SMB_VAULT_PATH` is `/mnt/obsidian-vault/MyObsidian`, the share root, since the
+   vault left the Google Drive domain on the Mac (2026-09-16). Changing it needs a
+   container recreate, not a restart: a stale bind comes up healthy and indexes 0 notes.
 
 The `rclone-webdav` sidecar that used to sit between Hatchdoor and Google Drive
 (`rclone serve webdav gdrive:MyObsidian`, `WEBDAV_USER`/`WEBDAV_PASS`, the
-`web_dav` vault `0851e3e7-…` and its local mirror) was retired on 2026-09-15. The
-Mac's own Drive folder is the same content, exported over SMB by macOS, and mounting
+`web_dav` vault `0851e3e7-…` and its local mirror) was retired on 2026-09-15. At that
+point the served folder was the Mac's own Drive folder
+(`/Volumes/Data/Google Drive/MyObsidian`), exported over SMB by macOS, and mounting
 it directly removes the sidecar, the mirror, the Google OAuth token on this host, and
-the per-directory PROPFIND walk (which cost minutes per sync turn). Hatchdoor now
-registers that folder as `source: { type: local, path: /data/smb-vault }` — 708 notes,
+the per-directory PROPFIND walk (which cost minutes per sync turn). On 2026-09-16 the
+vault itself moved one level up, out of the Drive domain, to `/Volumes/Data/MyObsidian`
+(`/mnt/obsidian-vault/MyObsidian` over SMB) — the bind follows it. Hatchdoor now
+registers that folder as `source: { type: local, path: /data/smb-vault }` — 730 notes,
 read and written in place — and a host systemd timer re-indexes every 5 minutes,
 because macOS SMB delivers this client no change notifications. The WebDAV code is not
 merely idle here, it is **gone** (`9d8f6e7`, *Removal of the WebDAV vault source* above),
