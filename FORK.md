@@ -53,6 +53,8 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `9d8f6e7` | `feat!`: remove the WebDAV vault source (client, sync engine, scheduler, settings UI, tests) — the deployment serves a Local source over SMB now (see below) |
 | `119ea8d` | `docs`: record the WebDAV removal commit in the delta table |
 | `667c4f8` | `chore`: commit AGENTS.md (conflict resolved) and ignore machine-local agent tooling |
+| `2e7ae5e` | `docs`: retire the gdrive fuse path in the records, backfill the delta table |
+| `65f6d15` | `docs`: repoint the vault records to the new SMB path (MyObsidian at the share root) |
 
 ## Removal of the WebDAV vault source
 
