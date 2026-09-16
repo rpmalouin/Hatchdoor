@@ -48,7 +48,11 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `d6d1f05` | `fix(webdav)`: publish local edits to notes the remote still lists (see below) |
 | `85b4f19` | `fix(webdav)`: never heal a copy written in the same second as the last sync |
 | `e204450` | `docs`: record the WebDAV publish/heal deltas in FORK.md |
+| `2396af5` | `docs`: retire the WebDAV deployment, record the Local SMB vault source |
+| `2f3d8e3` | `docs(hermes)`: record retiring the legacy rclone pieces |
 | `9d8f6e7` | `feat!`: remove the WebDAV vault source (client, sync engine, scheduler, settings UI, tests) — the deployment serves a Local source over SMB now (see below) |
+| `119ea8d` | `docs`: record the WebDAV removal commit in the delta table |
+| `667c4f8` | `chore`: commit AGENTS.md (conflict resolved) and ignore machine-local agent tooling |
 
 ## Removal of the WebDAV vault source
 
@@ -289,10 +293,14 @@ it directly removes the sidecar, the mirror, the Google OAuth token on this host
 the per-directory PROPFIND walk (which cost minutes per sync turn). Hatchdoor now
 registers that folder as `source: { type: local, path: /data/smb-vault }` — 708 notes,
 read and written in place — and a host systemd timer re-indexes every 5 minutes,
-because macOS SMB delivers this client no change notifications. The fork's WebDAV
-code stays available (it is what makes an RFC-4918 endpoint a first-class source, and
-the scheduler commits `f13441c`/`f3dd537` are what made it automatic), but this
-deployment no longer exercises it.
+because macOS SMB delivers this client no change notifications. The WebDAV code is not
+merely idle here, it is **gone** (`9d8f6e7`, *Removal of the WebDAV vault source* above),
+and the host-side Drive plumbing went with it: the `rclone-gdrive.service` fuse mount, the
+`/mnt/gdrive` mountpoint, and the host `rclone` package and configs were all retired —
+unit and configs parked under `/appdata/_retired-hatchdoor-drive-20260915/` on 2026-09-15,
+the mountpoint directory deleted and the `rclone` package purged on 2026-09-16.
+Re-introducing an RFC-4918 source means restoring both the code (the commit before
+`9d8f6e7`) and that host tooling.
 
 ### MCP (what agents see)
 
@@ -301,15 +309,20 @@ vault to agents — 35 tools, prefixed `mcp_hatchdoor_*` in Hermes (read/search/
 create/edit/move/delete/archive notes, graph, tree, stats, vault admin,
 attachments). It is registered in Hermes with its own bearer token
 (`HATCHDOOR_MCP_BEARER_TOKEN`, synced into `~/.hermes/.env`, never committed),
-and agents are *forced* through it: `approvals.deny` blocks any terminal
-command containing `/mnt/gdrive` or `rclone ... gdrive`, and the
-`vault-maintenance`/`vaultagent` profiles have the `file` and `code_execution`
-toolsets disabled, so the vault is only ever touched via `mcp_hatchdoor_*`.
+and agents are *forced* through it: the `vault-maintenance`/`vaultagent` profiles
+have the `file` and `code_execution` toolsets disabled, so the vault is only ever
+touched via `mcp_hatchdoor_*`. That is the whole guard today: `approvals.deny` used to
+block terminal commands naming the fuse path as well, and that rule was dropped on
+2026-09-16 once the path itself was gone (mountpoint deleted, host `rclone` purged).
 The complete playbook — registration, token sync, the real 35-tool surface,
 operation templates, the hash-guard rule, the VaultAgent role, drift-detection
 cron — is in [`HERMES.md`](HERMES.md).
 
 ### Operational caveats (live-verified 2026-09-02)
+
+*Items 1-3 belong to the retired `rclone-webdav` sidecar and its mirror (both removed
+2026-09-15) — kept as history, not as current behaviour. Item 4 is still the live
+documentation convention.*
 
 1. **MCP `move_note`/`delete_note`/`archive_note` do NOT propagate to Google
    Drive.** The sync engine is deliberately pull-side-only for deletions (root-404

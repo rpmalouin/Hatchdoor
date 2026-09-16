@@ -28,7 +28,9 @@ Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
   2026-09-15 — no Google OAuth token for the vault remains on this host: the legacy
   `${VAULT_PATH}:/data/vault` bind, the host `rclone-gdrive.service` fuse mount and both
   rclone configs were retired the same day (parked under
-  `/appdata/_retired-hatchdoor-drive-20260915/` for a one-step restore). macOS SMB
+  `/appdata/_retired-hatchdoor-drive-20260915/` for a one-step restore; the `/mnt/gdrive`
+  mountpoint directory was deleted and the host `rclone` package purged on 2026-09-16, so
+  a restore now also needs `apt install rclone`). macOS SMB
   sends this client no change notifications, so a systemd timer re-indexes every five
   minutes (§12).
 - Server-side env gates (compose `.env`): `HATCHDOOR_MCP_ENABLED=true`,
@@ -92,7 +94,8 @@ Real 35-tool surface (Hermes names them `mcp_hatchdoor_<tool>`):
 Addressing rules: notes take `vault_id` + `slug` (vault-relative identifier,
 e.g. `folder/note-name`); collection reads take `scope` (one vault_id or the
 literal `all`). The `vault_id` is immutable across revisions — get it from
-`list_vaults` (this deployment: `0851e3e7-2daf-4e73-aff2-f074f282c5c6`).
+`list_vaults` (this deployment: `15b3a89e-80eb-4e1a-a5c8-ddfec68b00b7`, the Local/SMB
+vault; the WebDAV-era id `0851e3e7-2daf-4e73-aff2-f074f282c5c6` is retired).
 
 ## 4. Operation → tool templates
 
@@ -113,21 +116,21 @@ over `delete_note`, `move_rename_note` over hand-editing links.
 
 ## 5. Enforce hatchdoor-only vault access
 
-The vault must never be touched through the filesystem. Two layers:
+The vault must never be touched through the filesystem. The only layer left is the
+profile:
 
-- `approvals.deny` in config.yaml (both the default and vault-maintenance
-  profiles): `['*/mnt/gdrive*', '*rclone* gdrive*']` — any terminal command
-  whose text contains the vault path (reads included), or rclone against the
-  gdrive remote, is BLOCKED before execution; `--yolo` does not bypass.
-  Denied calls return `BLOCKED: ... Do NOT retry or rephrase` — route the
-  operation through `mcp_hatchdoor_*` instead.
 - The vault-maintenance profile has the `file` and `code_execution` toolsets
   disabled, so `read_file`/`write_file`/`patch`/`search_files` do not exist
-  there at all.
+  there at all. **This is what protects the live vault** — the SMB vault path is
+  writable and nothing else gates it.
 
-Footgun: because the deny rule matches the literal path, you cannot run ANY
-terminal command containing `/mnt/gdrive` — including one that would edit
-this guard. Compose the string at runtime (e.g. `printf '["*%s/%s*"]' mnt gdrive`).
+History: a second layer, `approvals.deny = ['*/mnt/gdrive*', '*rclone* gdrive*']`,
+used to block terminal commands naming the retired fuse path — or rclone against the
+gdrive remote — before execution, `--yolo` included. It was dropped on 2026-09-16
+once the path itself was gone (`/mnt/gdrive` deleted, the host `rclone` package
+purged; the `rclone-gdrive.service` unit and both rclone configs had been parked in
+`/appdata/_retired-hatchdoor-drive-20260915/` on 2026-09-15). Nothing needs it back
+unless the fuse path is ever resurrected.
 
 Vault memory files (`memory` / `memory.md` in the vault) are also routed
 through MCP: `get_note` + `append_to_note`/`edit_note`/`update_note`
