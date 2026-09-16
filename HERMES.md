@@ -10,16 +10,18 @@ skills installed, they are the maintained copies of this knowledge.
 Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
 (application structure), `README.md` (user docs).
 
+> **Placeholders.** This repo is public, so host-specific values are not published: `<repo>` = local clone of this fork · `<stack-dir>` = directory holding the deployment's compose file · `<smb-mount>` = host mount of the vault share · `<mac-mini-ip>` / `<mac-vault-dir>` = the Mac's LAN address and the vault folder on it · `<credentials-file>` = the 0600 SMB credentials file · `<parked-drive-tooling>` / `<opsbrain-checkout>` = other host-local directories.
+
 ## 1. Topology (what Hatchdoor is, where it runs)
 
 - Container `hatchdoor` (image `hatchdoor:local`, built from the fork at
-  `/appdata/Hatchdoor`), HTTP on port 42824, MCP route `http://127.0.0.1:42824/mcp`.
+  `<repo>`), HTTP on port 42824, MCP route `http://127.0.0.1:42824/mcp`.
 - The vault is the **real Obsidian vault on the Mac Mini**, reached over SMB — no
-  WebDAV, no rclone, no mirror. `/etc/fstab` mounts `//10.1.10.75/Data` at
-  `/mnt/obsidian-vault` (cifs, `credentials=/etc/mac-smb-credentials` (0600),
+  WebDAV, no rclone, no mirror. `/etc/fstab` mounts `//<mac-mini-ip>/Data` at
+  `<smb-mount>` (cifs, `credentials=<credentials-file>` (0600),
   `uid=65532,gid=65532,noperm,file_mode=0770,dir_mode=0770,soft,_netdev,nofail`), and
   the stack binds the vault's folder into the container as `/data/smb-vault`
-  (`SMB_VAULT_PATH` in the stack `.env` = `/mnt/obsidian-vault/MyObsidian`, the share
+  (`SMB_VAULT_PATH` in the stack `.env` = `<smb-mount>/MyObsidian`, the share
   ROOT — it sat at `Google Drive/MyObsidian` until the Mac-side relocation of
   2026-09-16). Hatchdoor registers it as a
   `local` source (vault id `15b3a89e-80eb-4e1a-a5c8-ddfec68b00b7`, name `vault`) and
@@ -30,7 +32,7 @@ Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
   2026-09-15 — no Google OAuth token for the vault remains on this host: the legacy
   `${VAULT_PATH}:/data/vault` bind, the host `rclone-gdrive.service` fuse mount and both
   rclone configs were retired the same day (parked under
-  `/appdata/_retired-hatchdoor-drive-20260915/` for a one-step restore; the `/mnt/gdrive`
+  `<parked-drive-tooling>/` for a one-step restore; the `/mnt/gdrive`
   mountpoint directory was deleted and the host `rclone` package purged on 2026-09-16, so
   a restore now also needs `apt install rclone`). macOS SMB
   sends this client no change notifications, so a systemd timer re-indexes every five
@@ -131,7 +133,7 @@ used to block terminal commands naming the retired fuse path — or rclone again
 gdrive remote — before execution, `--yolo` included. It was dropped on 2026-09-16
 once the path itself was gone (`/mnt/gdrive` deleted, the host `rclone` package
 purged; the `rclone-gdrive.service` unit and both rclone configs had been parked in
-`/appdata/_retired-hatchdoor-drive-20260915/` on 2026-09-15). Nothing needs it back
+`<parked-drive-tooling>/` on 2026-09-15). Nothing needs it back
 unless the fuse path is ever resurrected.
 
 Vault memory files (`memory` / `memory.md` in the vault) are also routed
@@ -185,7 +187,7 @@ Tool-call hygiene (the live run lost time to all three): one entry per
 `get_note` needs `vault_id` + `slug`.
 
 OpsBrain report contract (write every run, even when empty):
-`/appdata/OpsBrain/logs/vault_drift_report.json`:
+`<opsbrain-checkout>/logs/vault_drift_report.json`:
 `{"timestamp": "<ISO-8601 UTC>", "attention": "actionable|low|none",
 "findings": [{"path": "<note path>", "issue": "<description>"}]}`
 Include repaired AND still-broken AND review items.
@@ -226,7 +228,7 @@ gateway is running pre-update modules ("mixed sys.modules", reported by
 
 ## 8. Fork fixes and rebuild (hatchdoor:local)
 
-The fork `/appdata/Hatchdoor` is now a thin delta over upstream: a dependency
+The fork `<repo>` is now a thin delta over upstream: a dependency
 security-hardening commit plus `cecadd1`'s two fuse-vault write/index fixes —
 which is exactly what a vault served from a mounted network share needs:
 
@@ -244,11 +246,11 @@ deltas above are re-integrated into upstream's newer structure on each merge.
 (Historical note: the WebDAV deltas used to need the same treatment — a scheduler
 spawned/aborted in server startup, per-Vault poll activation in `vault_runtime`, a
 "not git" arm — which is the merge cost that motivated removing the feature, below.)
-Rebuild procedure (source repo: `/appdata/Hatchdoor`, stack:
-`/appdata/A--docker_stacks/Hatchdoor`):
+Rebuild procedure (source repo: `<repo>`, stack:
+`<stack-dir>`):
 
 ```
-cd /appdata/A--docker_stacks/Hatchdoor
+cd <stack-dir>
 docker compose build && docker compose up -d --force-recreate
 ```
 
@@ -313,9 +315,9 @@ Prove the OpsBrain hand-off (drift job → report → collector), read-only:
 ```
 # what OpsBrain derives from the report right now
 python3 - <<'PY'
-import sys; sys.path.insert(0, "/appdata/OpsBrain")
+import sys; sys.path.insert(0, "<opsbrain-checkout>")
 from collector.vault_drift_ingest import pull_report, classify, create_context_nodes
-r = pull_report("/appdata/OpsBrain/logs/vault_drift_report.json", max_age_s=691200)
+r = pull_report("<opsbrain-checkout>/logs/vault_drift_report.json", max_age_s=691200)
 print("up:", r.get("up"), "age_s:", r.get("age_s"), "stale:", r.get("stale"), "err:", r.get("err"))
 c = classify(r); print("counts:", c["counts"])
 print("attention:", create_context_nodes(r, c)["attention"])
@@ -381,7 +383,7 @@ stale on the first Mac-side edit, even though note *content* reads stay correct
 Installed fix (host-side, not in the repo):
 
 - `/usr/local/bin/hatchdoor-vault-refresh` — reads the web bearer token from the stack
-  `.env` itself, verifies `/mnt/obsidian-vault` is mounted (mounting it from fstab when
+  `.env` itself, verifies `<smb-mount>` is mounted (mounting it from fstab when
   it is not), then `POST /api/v1/vaults/<id>/refresh` for every enabled, active Vault.
   202 = admitted to the index FIFO. It never prints a credential.
 - `/etc/systemd/system/hatchdoor-vault-refresh.{service,timer}` — `OnCalendar=*:0/5`,

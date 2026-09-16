@@ -11,7 +11,7 @@
 > while. Nothing below describes the current code.
 
 Status: SUPERSEDED (was DRAFT — for review before shared-file changes).
-Author: rpmalouin fork. Repo: /appdata/Hatchdoor.
+Author: rpmalouin fork. Repo: `<repo>` (a local clone; host paths are not published).
 Related: FORK.md (fork delta), ADR-01/03/10/11 (constraints).
 
 ## Outcome

@@ -2,6 +2,8 @@
 
 ## What this fork is
 
+> **Placeholders.** This repo is public, so host-specific values are not published: `<repo>` = local clone of this fork · `<stack-dir>` = directory holding the deployment's compose file · `<smb-mount>` = host mount of the vault share · `<mac-mini-ip>` / `<mac-vault-dir>` = the Mac's LAN address and the vault folder on it · `<credentials-file>` = the 0600 SMB credentials file · `<parked-drive-tooling>` / `<opsbrain-checkout>` = other host-local directories.
+
 `rpmalouin/Hatchdoor` is a fork of [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor).
 It tracks upstream `main` and carries a small, documented set of deltas on top:
 a dependency security-hardening commit and fuse-vault write/index resilience.
@@ -281,12 +283,12 @@ fork code at all (*Removal of the WebDAV vault source* above).
 
 ### Deployment (what runs today)
 
-`/appdata/A--docker_stacks/Hatchdoor/docker-compose.yml` runs one container:
+`<stack-dir>/docker-compose.yml` runs one container:
 
 1. **`hatchdoor`** (image `hatchdoor:local`, built from THIS fork — the `build:`
-   context is `/appdata/Hatchdoor`). HTTP on `:42824`, MCP on `/mcp`. The vault is
+   context is `<repo>`). HTTP on `:42824`, MCP on `/mcp`. The vault is
    bound in from the Mac Mini over SMB (`SMB_VAULT_PATH` → `/data/smb-vault`) — and
-   `SMB_VAULT_PATH` is `/mnt/obsidian-vault/MyObsidian`, the share root, since the
+   `SMB_VAULT_PATH` is `<smb-mount>/MyObsidian`, the share root, since the
    vault left the Google Drive domain on the Mac (2026-09-16). Changing it needs a
    container recreate, not a restart: a stale bind comes up healthy and indexes 0 notes.
 
@@ -294,18 +296,18 @@ The `rclone-webdav` sidecar that used to sit between Hatchdoor and Google Drive
 (`rclone serve webdav gdrive:MyObsidian`, `WEBDAV_USER`/`WEBDAV_PASS`, the
 `web_dav` vault `0851e3e7-…` and its local mirror) was retired on 2026-09-15. At that
 point the served folder was the Mac's own Drive folder
-(`/Volumes/Data/Google Drive/MyObsidian`), exported over SMB by macOS, and mounting
+(`<mac-vault-dir>`), exported over SMB by macOS, and mounting
 it directly removes the sidecar, the mirror, the Google OAuth token on this host, and
 the per-directory PROPFIND walk (which cost minutes per sync turn). On 2026-09-16 the
-vault itself moved one level up, out of the Drive domain, to `/Volumes/Data/MyObsidian`
-(`/mnt/obsidian-vault/MyObsidian` over SMB) — the bind follows it. Hatchdoor now
+vault itself moved one level up, out of the Drive domain, to `<mac-vault-dir>`
+(`<smb-mount>/MyObsidian` over SMB) — the bind follows it. Hatchdoor now
 registers that folder as `source: { type: local, path: /data/smb-vault }` — 730 notes,
 read and written in place — and a host systemd timer re-indexes every 5 minutes,
 because macOS SMB delivers this client no change notifications. The WebDAV code is not
 merely idle here, it is **gone** (`9d8f6e7`, *Removal of the WebDAV vault source* above),
 and the host-side Drive plumbing went with it: the `rclone-gdrive.service` fuse mount, the
 `/mnt/gdrive` mountpoint, and the host `rclone` package and configs were all retired —
-unit and configs parked under `/appdata/_retired-hatchdoor-drive-20260915/` on 2026-09-15,
+unit and configs parked under `<parked-drive-tooling>/` on 2026-09-15,
 the mountpoint directory deleted and the `rclone` package purged on 2026-09-16.
 Re-introducing an RFC-4918 source means restoring both the code (the commit before
 `9d8f6e7`) and that host tooling.
@@ -394,8 +396,7 @@ No secrets, credentials, or machine-local configuration are committed. The
 WebDAV feature adds no credentials beyond the existing `https_credentials`
 mechanism, and those are stored only in Hatchdoor's own backend secrets store,
 never committed. The rclone config, `WEBDAV_USER`/`WEBDAV_PASS`, and all
-`HATCHDOOR_*` tokens live in the *stack's* `.env` (`/appdata/A--docker_stacks/
-Hatchdoor/.env`), which is outside this repo and never pushed. Local, untracked
+`HATCHDOOR_*` tokens live in the *stack's* `.env` (`<stack-dir>/.env`), which is outside this repo and never pushed. Local, untracked
 agent scaffolding (`.codebuddy/`, `.gemini/`, `.mcp.json`, etc.) is kept out of
 version control. `MEMORY.md` is gitignored (`458154b`) — the committed docs for
 agents are `FORK.md`, `HERMES.md`, and `SPEC.md`.
