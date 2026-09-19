@@ -252,7 +252,8 @@ completed 28 ms after the turn that recorded `last_sync_at`, inside the same sec
 Gates: `cargo check`, `cargo check --tests`, `node scripts/check-module-map.mjs` (213
 production files owned), and the `Dockerfile.test` suite — **1123 + 5 tests, 0 failed** on both
 commits. Deployed as `hatchdoor:local` with only the `hatchdoor` service recreated
-(`hatchdoor:local-pre-d6d1f05` kept for rollback). Live verification: a stranded note was
+(`hatchdoor:local-pre-d6d1f05` kept for rollback — recreated 2026-09-19 from the pre-fix tree
+`3594683`; see *Rollback images* below). Live verification: a stranded note was
 pushed to Drive by the next turn (`pushed=1`), the three vault documentation notes followed
 (`pushed=2`, plus the one-time refresh after a push), and the mirror, the Drive copy and the
 fuse mount then agreed byte-for-byte on all 879 files.
@@ -313,6 +314,42 @@ unit and configs parked under `<parked-drive-tooling>/` on 2026-09-15,
 the mountpoint directory deleted and the `rclone` package purged on 2026-09-16.
 Re-introducing an RFC-4918 source means restoring both the code (the commit before
 `9d8f6e7`) and that host tooling.
+
+### Rollback images
+
+Two local image tags carry the deployment's history:
+
+- **`hatchdoor:local`** — the running image, built by the stack compose from this fork's
+  current HEAD. Rebuild and redeploy with `docker compose build && docker compose up -d`
+  in `<stack-dir>`.
+- **`hatchdoor:local-pre-d6d1f05`** — the rollback image kept when `d6d1f05` + `85b4f19`
+  shipped (see *Details of the sync publish/heal commits* above). It is the tree at
+  `3594683`, i.e. `d6d1f05^`: the state the deployment was running before those fixes.
+  **Recreated 2026-09-19** from that commit (the tag had been lost to a host-wide image
+  reclaim). Rebuild it from the named commit rather than from a neighbouring one:
+
+  ```bash
+  git -C <repo> worktree add --detach /tmp/hatchdoor-pre-d6d1f05 3594683
+  docker build -t hatchdoor:local-pre-d6d1f05 /tmp/hatchdoor-pre-d6d1f05
+  git -C <repo> worktree remove --force /tmp/hatchdoor-pre-d6d1f05
+  ```
+
+  Verify by build context, image config and binary hash — **not** by a version string: the
+  final stage is shell-less (`docker run … sh` fails by design) and both the pre-fix and the
+  current binaries report the same release version, so a `--version`-style check proves
+  nothing here.
+
+  **Caveat:** `3594683` predates the WebDAV removal (`9d8f6e7`) and the SMB vault move, so
+  this image pairs with the **Drive-era** compose and env (`WEBDAV_*` keys, the
+  `rclone-webdav` sidecar). It restores the safety net that existed at that deploy; it is
+  not a drop-in replacement for today's SMB deployment.
+
+Two other local tags (`hatchdoor:test` from `Dockerfile.test`, `hatchdoor:verify` from
+`docker build --target verification`) are byproducts of running the gates, not rollback
+points — the recipes above recreate them on demand. A tag named
+`hatchdoor:local-prev-<date>` also existed and is **not recoverable**: it was never named in
+the docs, has no matching git ref, and the image listing truncated it. Nothing should be
+rebuilt under a guessed name for it.
 
 ### MCP (what agents see)
 
