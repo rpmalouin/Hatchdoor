@@ -10,6 +10,7 @@ import {
   isDemoReadOnlyError,
   moveNote,
   renameNote,
+  refreshVault,
   MUTATION_FETCH_TIMEOUT_MS,
   updateNote,
   uploadAttachment,
@@ -86,6 +87,71 @@ describe("writeApi", () => {
     expect(mockedApiFetch).toHaveBeenCalledWith(
       `/api/v1/vaults/${VAULT_ID}/write-capabilities`,
     );
+  });
+
+  it("admits a refresh turn for one Vault through the 202 schedule response", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse({ vault_id: VAULT_ID, schedule: "queued" }, 202),
+    );
+
+    await expect(refreshVault(VAULT_ID)).resolves.toEqual({
+      vault_id: VAULT_ID,
+      schedule: "queued",
+    });
+
+    const [url, init] = mockedApiFetch.mock.calls[0] ?? [];
+    expect(url).toBe(`/api/v1/vaults/${VAULT_ID}/refresh`);
+    expect(init?.method).toBe("POST");
+    expect(init?.timeoutMs).toBe(MUTATION_FETCH_TIMEOUT_MS);
+  });
+
+  it("returns a coalesced schedule and passes the caller's abort signal", async () => {
+    const controller = new AbortController();
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse({ vault_id: VAULT_ID, schedule: "coalesced" }, 202),
+    );
+
+    await expect(refreshVault(VAULT_ID, controller.signal)).resolves.toEqual({
+      vault_id: VAULT_ID,
+      schedule: "coalesced",
+    });
+
+    const [, init] = mockedApiFetch.mock.calls[0] ?? [];
+    expect(init?.signal).toBe(controller.signal);
+  });
+
+  it("refreshes each enabled Vault in a scope with its own POST", async () => {
+    const second = "00000000-0000-4000-8000-000000000002";
+    mockedApiFetch
+      .mockResolvedValueOnce(
+        jsonResponse({ vault_id: VAULT_ID, schedule: "queued" }, 202),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ vault_id: second, schedule: "coalesced" }, 202),
+      );
+
+    await refreshVault(VAULT_ID);
+    await refreshVault(second);
+
+    expect(mockedApiFetch.mock.calls.map(([url]) => url)).toEqual([
+      `/api/v1/vaults/${VAULT_ID}/refresh`,
+      `/api/v1/vaults/${second}/refresh`,
+    ]);
+  });
+
+  it("throws the standard API error when a refresh is refused", async () => {
+    mockedApiFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { code: "vault_unavailable", message: "down", retryable: false },
+        503,
+      ),
+    );
+
+    await expect(refreshVault(VAULT_ID)).rejects.toMatchObject({
+      name: "WriteApiError",
+      message: "down",
+      code: "vault_unavailable",
+    });
   });
 
   it("sends the expected create/update/rename/move/archive/delete write requests", async () => {

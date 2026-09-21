@@ -143,6 +143,8 @@ function ScopeZone({
   scopeFocusRequestId,
   onRestoreScopeFocus,
   startupProgress,
+  writeEnabled,
+  onRefreshVault,
   demoMode = false,
 }: {
   vaults: VaultSummary[];
@@ -157,10 +159,19 @@ function ScopeZone({
   /** The first-run model-setup/indexing progress the startup gate no longer
    * blocks on (#150), surfaced here in the zone's own slot instead. */
   startupProgress?: StartupProgress;
+  /** Whether the app may act at all: the Refresh control is demo-guarded and
+   * needs a writable collection, and stays on screen disabled with the reason
+   * in its title rather than disappearing (#152's posture, applied to a
+   * control that is informative while it cannot act). */
+  writeEnabled: boolean;
+  /** Asks the shell to admit a fresh Index turn for the live scope, then
+   * re-read the tree and changed-on-disk list. */
+  onRefreshVault: () => void | Promise<void>;
   /** Clamps every condition slot to the amber tier (#152). */
   demoMode?: boolean;
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const rowIds: VaultScope[] = [
     "all",
     ...vaults.map((vault) => vault.vault_id),
@@ -217,43 +228,85 @@ function ScopeZone({
   const worstTierClass =
     aggregate.kind === "shortfall" ? ` vault-tier-${aggregate.tier}` : "";
 
+  // The Refresh control's accessible name is the visible word itself; the
+  // title carries which scope it acts on and, when it cannot act, why — a
+  // disabled control that never says why reads as a bug (#152's posture).
+  const refreshTitle = `Refresh ${scopeName(scope, vaults)}`;
+  const refreshUnavailable = demoMode
+    ? "unavailable in the read-only demo"
+    : !writeEnabled
+      ? "unavailable while write mode is off"
+      : null;
+  const refreshDisabled = refreshing || refreshUnavailable !== null;
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefreshVault();
+    } catch {
+      // The shell owns surfacing a refresh failure; the control only needs to
+      // leave its in-flight state so it does not stay disabled.
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="scope-zone">
-      <button
-        type="button"
-        className="side-head scope-zone-head"
-        data-open={!collapsed}
-        aria-expanded={!collapsed}
-        aria-controls="scope-zone-list"
-        onClick={onToggleCollapsed}
-      >
-        <span className="side-caret" aria-hidden="true" />
-        <span className="side-label">Scope</span>
-        <span className="scope-zone-keycap" aria-hidden="true">
-          V
-        </span>
-        <span className="side-rule" />
-        {collapsed ? (
-          <>
-            <span className={`scope-zone-current${worstTierClass}`}>
-              {scopeName(scope, vaults)}
-            </span>
-            {startupProgress ? (
-              <StartupProgressSlot progress={startupProgress} />
-            ) : (
-              <VaultAggregateSlot
-                vaults={vaults}
-                counts={noteCounts}
-                demoMode={demoMode}
-              />
-            )}
-          </>
-        ) : (
-          <span className="side-count">
-            {String(vaults.length).padStart(2, "0")}
+      <div className="scope-zone-bar" data-open={!collapsed}>
+        <button
+          type="button"
+          className="side-head scope-zone-head"
+          data-open={!collapsed}
+          aria-expanded={!collapsed}
+          aria-controls="scope-zone-list"
+          onClick={onToggleCollapsed}
+        >
+          <span className="side-caret" aria-hidden="true" />
+          <span className="side-label">Scope</span>
+          <span className="scope-zone-keycap" aria-hidden="true">
+            V
           </span>
-        )}
-      </button>
+          <span className="side-rule" />
+          {collapsed ? (
+            <>
+              <span className={`scope-zone-current${worstTierClass}`}>
+                {scopeName(scope, vaults)}
+              </span>
+              {startupProgress ? (
+                <StartupProgressSlot progress={startupProgress} />
+              ) : (
+                <VaultAggregateSlot
+                  vaults={vaults}
+                  counts={noteCounts}
+                  demoMode={demoMode}
+                />
+              )}
+            </>
+          ) : (
+            <span className="side-count">
+              {String(vaults.length).padStart(2, "0")}
+            </span>
+          )}
+        </button>
+
+        <UiButton
+          type="button"
+          className="scope-zone-refresh"
+          title={
+            refreshUnavailable
+              ? `${refreshTitle} — ${refreshUnavailable}`
+              : refreshTitle
+          }
+          aria-busy={refreshing}
+          disabled={refreshDisabled}
+          onClick={() => {
+            void handleRefresh();
+          }}
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </UiButton>
+      </div>
 
       {collapsed && viewingVault ? (
         <p className="scope-zone-viewing-line">viewing {viewingVault.name}</p>
@@ -505,6 +558,8 @@ type ExplorerPaneProps = {
   onExpandedFoldersChange: (next: Record<string, boolean>) => void;
   onCloseDrawer: () => void;
   onRefreshTree: () => void;
+  /** Asks the shell to admit a fresh Index turn for the live scope. */
+  onRefreshVault: () => void | Promise<void>;
   onScrollTopChange: (top: number) => void;
   vaults: VaultSummary[];
   scope: VaultScope;
@@ -542,6 +597,7 @@ export function ExplorerPane({
   onExpandedFoldersChange,
   onCloseDrawer,
   onRefreshTree,
+  onRefreshVault,
   onScrollTopChange,
   vaults,
   scope,
@@ -678,6 +734,8 @@ export function ExplorerPane({
           scopeFocusRequestId={scopeFocusRequestId}
           onRestoreScopeFocus={onRestoreScopeFocus}
           startupProgress={startupProgress}
+          writeEnabled={writeEnabled}
+          onRefreshVault={onRefreshVault}
           demoMode={demoMode}
         />
       )}

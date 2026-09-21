@@ -1271,3 +1271,69 @@ describe("touch editing hint", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("App vault refresh control", () => {
+  it("refreshes every enabled Vault in scope, then re-reads the tree and changed-on-disk list", async () => {
+    const alpha = healthyVault("Alpha");
+    const beta = healthyVault("Beta");
+    const refreshed: string[] = [];
+    let treeReads = 0;
+    let recentReads = 0;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.endsWith("/api/v1/vaults")) {
+          return jsonResponse(discoveryResponse([alpha, beta]));
+        }
+        if (url.includes("/write-capabilities")) {
+          return jsonResponse({
+            vault_id: alpha.vault_id,
+            enabled: true,
+            warnings: [],
+          });
+        }
+        if (url.endsWith("/refresh") && method === "POST") {
+          refreshed.push(url);
+          return jsonResponse({ vault_id: url, schedule: "queued" }, 202);
+        }
+        if (url.includes("/tree")) {
+          treeReads += 1;
+          return collectionEnvelope([]);
+        }
+        if (url.includes("/recent")) {
+          recentReads += 1;
+          return collectionEnvelope([]);
+        }
+        return new Response("not found", { status: 404 });
+      },
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App startupStatus={{ state: "ready" }} onRetryModelSetup={() => {}} />
+      </MemoryRouter>,
+    );
+
+    const refresh = await screen.findByRole("button", { name: "Refresh" });
+    await waitFor(() => {
+      expect(treeReads).toBeGreaterThan(0);
+    });
+    const treesBefore = treeReads;
+    const recentsBefore = recentReads;
+
+    fireEvent.click(refresh);
+
+    await waitFor(() => {
+      expect(refreshed).toHaveLength(2);
+      expect(treeReads).toBeGreaterThan(treesBefore);
+      expect(recentReads).toBeGreaterThan(recentsBefore);
+    });
+    expect(refreshed).toEqual([
+      `/api/v1/vaults/${alpha.vault_id}/refresh`,
+      `/api/v1/vaults/${beta.vault_id}/refresh`,
+    ]);
+  });
+});

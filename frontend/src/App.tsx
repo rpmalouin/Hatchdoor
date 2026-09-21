@@ -62,7 +62,10 @@ import { useVaultCollection, useVaultProjection } from "./vaults";
 import { scopeName } from "./app/vaultSlotLogic";
 import { useWriteMode } from "./hooks/useWriteMode";
 import { pruneNoteDrafts } from "./lib/writeDrafts";
-import { isDemoReadOnlyError } from "./api/writeApi";
+import {
+  isDemoReadOnlyError,
+  refreshVault as requestVaultRefresh,
+} from "./api/writeApi";
 import type { ActiveNoteMeta, RecentNote, VaultScope } from "./types";
 import { StartupGate } from "./startup/StartupGate";
 import {
@@ -187,6 +190,46 @@ function VaultWorkspace({
     },
     [loadVaults, setWriteNotice],
   );
+
+  // The Scope zone's Refresh control: admit one Index turn per Vault in the
+  // live scope, then re-read the explorer tree and the changed-on-disk list.
+  // Vaults refresh one after another so a slow answer cannot stampede the
+  // shared FIFO, and a failure on one is collected rather than thrown so the
+  // rest still get their turn. Nothing here polls: the collection revision
+  // stream re-reads again when the fresh snapshot republishes.
+  const handleRefreshVault = useCallback(async () => {
+    const targets =
+      scope === "all" ? vaults.map((vault) => vault.vault_id) : [scope];
+    const failed: string[] = [];
+    for (const vaultId of targets) {
+      try {
+        await requestVaultRefresh(vaultId);
+      } catch (error) {
+        if (handleDemoRefusal(error)) {
+          return;
+        }
+        failed.push(
+          vaults.find((vault) => vault.vault_id === vaultId)?.name ?? vaultId,
+        );
+      }
+    }
+    await loadTree();
+    await loadModifiedNotes();
+    if (failed.length > 0) {
+      setWriteNotice(
+        failed.length === 1
+          ? `Could not refresh ${failed[0]}. It may be unavailable.`
+          : `Could not refresh: ${failed.join(", ")}.`,
+      );
+    }
+  }, [
+    scope,
+    vaults,
+    handleDemoRefusal,
+    loadTree,
+    loadModifiedNotes,
+    setWriteNotice,
+  ]);
   const {
     searchOpen,
     setSearchOpen,
@@ -833,6 +876,7 @@ function VaultWorkspace({
             void loadTree();
             void loadModifiedNotes();
           }}
+          onRefreshVault={handleRefreshVault}
           onScrollTopChange={(current) => {
             window.localStorage.setItem(
               EXPLORER_SCROLL_TOP_KEY,

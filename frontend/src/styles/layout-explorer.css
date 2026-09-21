@@ -47,17 +47,37 @@
   background: var(--paper);
 }
 
-/* Scoped by the parent on purpose: `.side-head` is declared later in this file
-   at equal specificity, so a bare `.scope-zone-head` loses the cascade and the
-   head keeps side-head's 0.7rem bottom margin — which is what made the
-   collapsed zone taller than it reads. */
+/* The collapsible head and its Refresh control share one row, so the action
+   is present whether the zone is open or folded. Scoped by the parent on
+   purpose: `.side-head` is declared later in this file at equal specificity,
+   so a bare `.scope-zone-head` loses the cascade and the head keeps
+   side-head's 0.7rem bottom margin — which is what made the collapsed zone
+   taller than it reads. */
+.scope-zone-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.scope-zone-bar[data-open="false"] {
+  margin-bottom: 0;
+}
+
 .scope-zone .scope-zone-head {
+  flex: 1 1 0;
+  min-width: 0;
   margin-bottom: 0;
   cursor: pointer;
 }
 
-.scope-zone .scope-zone-head[data-open="true"] {
-  margin-bottom: 0.45rem;
+/* The Scope zone's Refresh control: the word, never a glyph, sized to the
+   zone's own compact register on the documented `.ui-button` base. Doubled up
+   because `.ui-button` is imported after this file. */
+.ui-button.scope-zone-refresh {
+  flex: 0 0 auto;
+  padding: 0.28rem 0.6rem;
+  font-size: 0.62rem;
 }
 
 /* `v` keycap after the SCOPE label (#146) — wide screens only, since the

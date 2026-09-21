@@ -82,6 +82,7 @@ function defaultPaneProps(): Parameters<typeof ExplorerPane>[0] {
     onExpandedFoldersChange: vi.fn(),
     onCloseDrawer: vi.fn(),
     onRefreshTree: vi.fn(),
+    onRefreshVault: vi.fn(),
     onScrollTopChange: vi.fn(),
     vaults: [],
     scope: "all" as const,
@@ -661,6 +662,91 @@ describe("ExplorerPane Scope zone", () => {
     );
 
     expect(scopeZone().getByRole("radio", { name: /^Beta/ })).toHaveFocus();
+  });
+});
+
+describe("ExplorerPane Scope zone refresh", () => {
+  afterEach(cleanup);
+
+  it("renders a worded Refresh control naming the live scope", () => {
+    renderPane({ vaults: THREE_VAULTS, scope: "all" });
+
+    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeVisible();
+    expect(refresh).toHaveAttribute("title", "Refresh All Vaults");
+    expect(refresh).toHaveTextContent("Refresh");
+  });
+
+  it("names the narrowed Vault on the control and keeps it visible when collapsed", () => {
+    renderPane({
+      vaults: THREE_VAULTS,
+      scope: THREE_VAULTS[1].vault_id,
+      scopeZoneCollapsed: true,
+    });
+
+    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeVisible();
+    expect(refresh).toHaveAttribute("title", `Refresh ${THREE_VAULTS[1].name}`);
+  });
+
+  it("asks the shell to refresh when clicked", () => {
+    const onRefreshVault = vi.fn().mockResolvedValue(undefined);
+    renderPane({
+      vaults: THREE_VAULTS,
+      scope: THREE_VAULTS[2].vault_id,
+      onRefreshVault,
+    });
+
+    fireEvent.click(scopeZone().getByRole("button", { name: "Refresh" }));
+
+    expect(onRefreshVault).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Refreshing… with aria-busy while the request is out and re-enables it after", async () => {
+    let resolveRefresh: () => void = () => {};
+    const onRefreshVault = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    renderPane({ vaults: THREE_VAULTS, onRefreshVault });
+
+    fireEvent.click(scopeZone().getByRole("button", { name: "Refresh" }));
+
+    const busy = scopeZone().getByRole("button", { name: "Refreshing…" });
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).toBeDisabled();
+
+    await act(async () => {
+      resolveRefresh();
+    });
+
+    const idle = scopeZone().getByRole("button", { name: "Refresh" });
+    expect(idle).toHaveAttribute("aria-busy", "false");
+    expect(idle).not.toBeDisabled();
+  });
+
+  it("disables Refresh in demo mode and states the reason in its title", () => {
+    renderPane({ vaults: THREE_VAULTS, demoMode: true });
+
+    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAttribute(
+      "title",
+      "Refresh All Vaults — unavailable in the read-only demo",
+    );
+  });
+
+  it("disables Refresh when write mode is off and states the reason in its title", () => {
+    renderPane({ vaults: THREE_VAULTS, writeEnabled: false });
+
+    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAttribute(
+      "title",
+      "Refresh All Vaults — unavailable while write mode is off",
+    );
   });
 });
 

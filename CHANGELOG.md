@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Fork: the Web UI has a spelled-out Refresh control for the current Vault
+  scope.** The HTTP API has had `POST /api/v1/vaults/{vault_id}/refresh` (admit
+  one Index turn, answer `queued`/`coalesced`) for a while, but the browser had
+  no way to reach it: the explorer refreshed only on the watcher's own
+  schedule, and the only visible affordance was the error-state **Retry**. The
+  sidebar's Scope zone now carries a worded **Refresh** button beside its head,
+  present whether the zone is open or folded. It refreshes every enabled Vault
+  in scope (or the one Vault the scope is narrowed to), then re-reads the tree
+  and the changed-on-disk list; while a request is out it reads `Refreshing…`
+  with `aria-busy`. It is disabled in the read-only demo and when write mode is
+  off, with the scope and the reason in its title rather than hidden. **Why:**
+  a person who edits a Vault outside Hatchdoor had no way to ask for a fresh
+  index on demand; the route was the missing half of that feature and this is
+  the other half. Docs: `docs/design/design-system.html` §05,
+  `docs/architecture/work-packet-vault-refresh-control.md`.
+
 - **Fork: the WebDAV vault source was removed.** The fork previously added a
   `VaultSource::WebDav` (RFC-4918 client, mirror sync engine, sync-turn scheduler,
   settings UI) so a vault living on Google Drive could be attached through an

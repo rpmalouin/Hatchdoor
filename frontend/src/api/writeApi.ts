@@ -153,6 +153,34 @@ export async function getWriteCapabilities(
   return (await res.json()) as WriteCapabilities;
 }
 
+/** The schedule the server assigns to an admitted Vault control turn:
+ * `queued` when it joined the shared FIFO, `coalesced` when a turn was already
+ * pending (`src/vault_management.rs`'s `VaultScheduleResponse`). */
+export type VaultSchedule = "queued" | "coalesced";
+
+/** `POST /api/v1/vaults/{vault_id}/refresh`'s `202 Accepted` body. */
+export type VaultScheduleResponse = {
+  vault_id: VaultId;
+  schedule: VaultSchedule;
+};
+
+/**
+ * Ask the server to admit one Index turn for this Vault — the "make it fresh
+ * now" action behind the Scope zone's Refresh control. The route only queues
+ * the turn; the runtime worker performs the authoritative scan and
+ * republishes the snapshot later. It carries the demo guard, so a demo
+ * instance answers with the `demo_read_only` write error.
+ */
+export function refreshVault(
+  vaultId: VaultId,
+  signal?: AbortSignal,
+): Promise<VaultScheduleResponse> {
+  return requestJson<VaultScheduleResponse>(
+    `/api/v1/vaults/${encodeURIComponent(vaultId)}/refresh`,
+    { method: "POST", signal },
+  );
+}
+
 export function createNote(
   vaultId: VaultId,
   relativePath: string,

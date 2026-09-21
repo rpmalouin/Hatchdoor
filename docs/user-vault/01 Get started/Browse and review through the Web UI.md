@@ -20,6 +20,14 @@ anything in yet and you land on the empty start page instead, with that
 Vault's notes in the explorer. Choosing **All Vaults**, or switching while you
 are in Settings, Statistics or the graph, leaves the page you are on alone.
 
+The Scope zone also carries a **Refresh** control, on screen whether the zone
+is open or folded. It asks Hatchdoor to re-index what the current scope covers
+— every enabled Vault under **All Vaults**, or just the Vault you narrowed to
+— and then re-reads the explorer and the changed-on-disk list. Reach for it
+after changing files outside Hatchdoor when you do not want to wait for the
+watcher to notice. It is disabled while the app is in the read-only demo or has
+write mode off, and its tooltip says which of the two applies.
+
 To find notes yourself, select **Search** in the top bar (or press `/` outside
 a text field). Semantic search is the default: use it for ideas and meaning.
 Turn on **Keyword mode** when exact wording matters, such as a hostname, tag,
