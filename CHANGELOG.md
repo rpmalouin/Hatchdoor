@@ -7,9 +7,10 @@
   one Index turn, answer `queued`/`coalesced`) for a while, but the browser had
   no way to reach it: the explorer refreshed only on the watcher's own
   schedule, and the only visible affordance was the error-state **Retry**. The
-  sidebar's Scope zone now carries a worded **Refresh** button beside its head,
-  present whether the zone is open or folded. It refreshes every enabled Vault
-  in scope (or the one Vault the scope is narrowed to), then re-reads the tree
+  explorer pane now carries a worded **Refresh** button in a top row of its
+  own, above the Scope zone and the rail, on screen at any Vault count and
+  inside the mobile drawer. It refreshes every enabled Vault in scope (or the
+  one Vault the scope is narrowed to), then re-reads the tree
   and the changed-on-disk list; while a request is out it reads `Refreshing…`
   with `aria-busy`. It is disabled in the read-only demo and when write mode is
   off, with the scope and the reason in its title rather than hidden. **Why:**

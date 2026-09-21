@@ -10,14 +10,17 @@ Related: `docs/architecture/module-map.md`, `docs/architecture/interface-change-
 
 ## Outcome
 
-The Web UI has a spelled-out, noticeable **Refresh** control in the sidebar's
-Scope zone. Activating it asks the server for a fresh index of the scoped
-Vault(s) — the existing `POST /api/v1/vaults/{vault_id}/refresh` action — and
-then re-reads the explorer tree and the changed-on-disk list. The control is
-present whether the Scope zone is collapsed or expanded, shows an in-flight
-state, names the scope it acts on, and stays on screen disabled (with the
-reason) when the app cannot act. Nothing else changes: the backend route and
-payload are untouched, and no polling or timers are added.
+The Web UI has a spelled-out, noticeable **Refresh** control in a row of its
+own at the top of the explorer pane, above the Scope zone. Activating it asks
+the server for a fresh index of the scoped Vault(s) — the existing
+`POST /api/v1/vaults/{vault_id}/refresh` action — and then re-reads the
+explorer tree and the changed-on-disk list. The control is present at every
+Vault count, at every scope, on desktop and inside the mobile drawer — unlike
+the Scope zone, which is absent at one enabled Vault and never rendered on
+mobile — shows an in-flight state, names the scope it acts on, and stays on
+screen disabled (with the reason) when the app cannot act. Nothing else
+changes: the backend route and payload are untouched, and no polling or timers
+are added.
 
 This packet narrows the user-requested outcome. It does not authorize broader
 work or opportunistic cleanup. Owned paths are writable only as necessary to
@@ -38,6 +41,8 @@ produce the outcome above.
 
 - `frontend/src/api/writeApi.ts`
 - `frontend/src/api/writeApi.test.ts`
+- `frontend/src/app/ExplorerPane.tsx`
+- `frontend/src/app/ExplorerPane.test.tsx`
 - `frontend/src/styles/layout-explorer.css`
 - `docs/design/design-system.html`
 - `CHANGELOG.md`
@@ -58,9 +63,10 @@ Stable contract:
   server's `code`.
 - `ExplorerPane`'s new required prop
   `onRefreshVault: () => void | Promise<void>`, and the new
-  `.scope-zone-refresh` (`ui-button`-based) control inside the Scope zone.
-- The Scope zone's existing head, rows, retry wiring, and every other prop are
-  unchanged.
+  `.explorer-refresh` (`ui-button`-based) control in the pane's own
+  `.explorer-refresh-bar` row above the Scope zone.
+- The Scope zone and its existing head, rows, retry wiring, contract, and every
+  other prop are unchanged from `db26b01`.
 
 Declared contract changes:
 
@@ -70,10 +76,6 @@ Declared contract changes:
 
 ## Coordination paths
 
-- `frontend/src/app/ExplorerPane.tsx` — renders the control in the Scope zone
-  and adds the declared `onRefreshVault` prop; existing retry wiring intact.
-- `frontend/src/app/ExplorerPane.test.tsx` — focused UI contract tests for the
-  control.
 - `frontend/src/App.write-mode.test.tsx` — one App-level integration test for
   the per-enabled-Vault refresh and the tree/recent re-read, following that
   file's full-app fetch-mock pattern.
@@ -116,14 +118,15 @@ Declared contract changes:
 Applicable items answered:
 
 - Producing boundary and contract: `frontend/src/api/writeApi.ts` (Note editing
-  and vault actions) produces the new `refreshVault` export; the shell
+  and vault actions) produces the new `refreshVault` export; the pane
   (Application shell and navigation) produces the `onRefreshVault` prop and the
-  Scope zone control.
-- Old contract: no frontend caller for the refresh route; the Scope zone had no
-  refresh affordance.
+  top-row refresh control.
+- Old contract: no frontend caller for the refresh route; the explorer pane had
+  no refresh affordance.
 - New contract: as in *Public contract* above. Additive.
 - Why the existing contract cannot support the outcome: the route existed but
-  had no TypeScript wrapper, and the Scope zone had no control to reach it.
+  had no TypeScript wrapper, and the pane had no control to reach it; the Scope
+  zone, the first home considered, is absent at one enabled Vault and on mobile.
 - Consumers searched for: `grep -rn "ExplorerPane" frontend/src` (only
   `App.tsx` and `ExplorerPane.test.tsx` render it); `grep -rn "writeApi"
   frontend/src` for existing importers. `App.tsx` already imports from
@@ -145,8 +148,9 @@ Applicable items answered:
 
 ## Acceptance criteria
 
-- The Scope zone renders a control whose visible label is the word `Refresh`,
-  present collapsed and expanded.
+- The explorer pane renders a control whose visible label is the word
+  `Refresh`, present at one enabled Vault, at several, and inside the mobile
+  drawer.
 - Clicking it calls `onRefreshVault`; while the call is in flight the label is
   `Refreshing…`, `aria-busy` is `true`, and the control is disabled.
 - Its `title` names the scope (`Refresh All Vaults` / `Refresh <Vault name>`)
@@ -178,6 +182,12 @@ Results recorded at hand-off: focused suites green; `typecheck` green; full
 `npm run test` green; `lint` green; `build` green; module map OK;
 `just docs-freshness` and the Web UI note review recorded in the hand-off
 report.
+
+Second round, re-homing the control to the pane's own top row: the same
+focused suites plus the new one-Vault, several-Vault, and mobile cases are
+green; the full gates and module-map check were repeated green, and the
+`docs-freshness` review was re-run (both Web UI notes opened; the editor note
+does not describe this control and did not drift).
 
 ## Escalation
 

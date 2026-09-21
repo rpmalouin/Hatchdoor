@@ -47,34 +47,35 @@
   background: var(--paper);
 }
 
-/* The collapsible head and its Refresh control share one row, so the action
-   is present whether the zone is open or folded. Scoped by the parent on
-   purpose: `.side-head` is declared later in this file at equal specificity,
-   so a bare `.scope-zone-head` loses the cascade and the head keeps
-   side-head's 0.7rem bottom margin — which is what made the collapsed zone
-   taller than it reads. */
-.scope-zone-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-bottom: 0.45rem;
-}
-
-.scope-zone-bar[data-open="false"] {
-  margin-bottom: 0;
-}
-
+/* Scoped by the parent on purpose: `.side-head` is declared later in this file
+   at equal specificity, so a bare `.scope-zone-head` loses the cascade and the
+   head keeps side-head's 0.7rem bottom margin — which is what made the
+   collapsed zone taller than it reads. */
 .scope-zone .scope-zone-head {
-  flex: 1 1 0;
-  min-width: 0;
   margin-bottom: 0;
   cursor: pointer;
 }
 
-/* The Scope zone's Refresh control: the word, never a glyph, sized to the
-   zone's own compact register on the documented `.ui-button` base. Doubled up
-   because `.ui-button` is imported after this file. */
-.ui-button.scope-zone-refresh {
+.scope-zone .scope-zone-head[data-open="true"] {
+  margin-bottom: 0.45rem;
+}
+
+/* The pane's own Refresh control, in a row of its own above the Scope zone,
+   so it is on screen at any Vault count, at any scope, on desktop and inside
+   the mobile drawer. Right-aligned so it reads as an action on the pane rather
+   than as another scope row. */
+.explorer-refresh-bar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* The Refresh control: the word, never a glyph, sized to the pane's compact
+   register on the documented `.ui-button` base. Doubled up because
+   `.ui-button` is imported after this file. */
+.ui-button.explorer-refresh {
   flex: 0 0 auto;
   padding: 0.28rem 0.6rem;
   font-size: 0.62rem;

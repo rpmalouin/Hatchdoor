@@ -665,28 +665,32 @@ describe("ExplorerPane Scope zone", () => {
   });
 });
 
-describe("ExplorerPane Scope zone refresh", () => {
+describe("ExplorerPane Refresh control", () => {
   afterEach(cleanup);
 
-  it("renders a worded Refresh control naming the live scope", () => {
-    renderPane({ vaults: THREE_VAULTS, scope: "all" });
+  it("renders at one Vault, where the Scope zone is absent", () => {
+    renderPane({ vaults: [THREE_VAULTS[0]] });
 
-    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    expect(screen.queryByText("Scope")).not.toBeInTheDocument();
+    const refresh = screen.getByRole("button", { name: "Refresh" });
     expect(refresh).toBeVisible();
-    expect(refresh).toHaveAttribute("title", "Refresh All Vaults");
     expect(refresh).toHaveTextContent("Refresh");
+    expect(refresh).toHaveAttribute("title", "Refresh All Vaults");
   });
 
-  it("names the narrowed Vault on the control and keeps it visible when collapsed", () => {
-    renderPane({
-      vaults: THREE_VAULTS,
-      scope: THREE_VAULTS[1].vault_id,
-      scopeZoneCollapsed: true,
-    });
+  it("renders at several Vaults and names the narrowed scope", () => {
+    renderPane({ vaults: THREE_VAULTS, scope: THREE_VAULTS[1].vault_id });
 
-    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    const refresh = screen.getByRole("button", { name: "Refresh" });
     expect(refresh).toBeVisible();
     expect(refresh).toHaveAttribute("title", `Refresh ${THREE_VAULTS[1].name}`);
+  });
+
+  it("renders inside the mobile drawer, where the Scope zone never does", () => {
+    renderPane({ vaults: THREE_VAULTS, isMobile: true });
+
+    expect(screen.queryByText("Scope")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
   });
 
   it("asks the shell to refresh when clicked", () => {
@@ -697,7 +701,7 @@ describe("ExplorerPane Scope zone refresh", () => {
       onRefreshVault,
     });
 
-    fireEvent.click(scopeZone().getByRole("button", { name: "Refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     expect(onRefreshVault).toHaveBeenCalledTimes(1);
   });
@@ -712,9 +716,9 @@ describe("ExplorerPane Scope zone refresh", () => {
     );
     renderPane({ vaults: THREE_VAULTS, onRefreshVault });
 
-    fireEvent.click(scopeZone().getByRole("button", { name: "Refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
-    const busy = scopeZone().getByRole("button", { name: "Refreshing…" });
+    const busy = screen.getByRole("button", { name: "Refreshing…" });
     expect(busy).toHaveAttribute("aria-busy", "true");
     expect(busy).toBeDisabled();
 
@@ -722,15 +726,15 @@ describe("ExplorerPane Scope zone refresh", () => {
       resolveRefresh();
     });
 
-    const idle = scopeZone().getByRole("button", { name: "Refresh" });
+    const idle = screen.getByRole("button", { name: "Refresh" });
     expect(idle).toHaveAttribute("aria-busy", "false");
     expect(idle).not.toBeDisabled();
   });
 
   it("disables Refresh in demo mode and states the reason in its title", () => {
-    renderPane({ vaults: THREE_VAULTS, demoMode: true });
+    renderPane({ vaults: [THREE_VAULTS[0]], demoMode: true });
 
-    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    const refresh = screen.getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();
     expect(refresh).toHaveAttribute(
       "title",
@@ -739,9 +743,9 @@ describe("ExplorerPane Scope zone refresh", () => {
   });
 
   it("disables Refresh when write mode is off and states the reason in its title", () => {
-    renderPane({ vaults: THREE_VAULTS, writeEnabled: false });
+    renderPane({ vaults: [THREE_VAULTS[0]], writeEnabled: false });
 
-    const refresh = scopeZone().getByRole("button", { name: "Refresh" });
+    const refresh = screen.getByRole("button", { name: "Refresh" });
     expect(refresh).toBeDisabled();
     expect(refresh).toHaveAttribute(
       "title",

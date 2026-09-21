@@ -599,12 +599,11 @@
   .side-scope { flex: 0 0 auto; padding: 0.6rem 0.5rem 0.7rem; border-bottom: 1px solid var(--rule); background: var(--paper); }
   .side-scope .side-head { margin-bottom: 0.45rem; }
   .side-scope[data-open="false"] .side-head { margin-bottom: 0; }
-  /* The head and its Refresh control share one row, so the action survives a
-     fold. The doubled class beats `.ui-btn`, which is declared later. */
-  .side-scope-bar { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.45rem; }
-  .side-scope[data-open="false"] .side-scope-bar { margin-bottom: 0; }
-  .side-scope-bar .side-head { flex: 1 1 0; min-width: 0; margin-bottom: 0; }
-  .ui-btn.side-scope-refresh { flex: 0 0 auto; padding: 0.28rem 0.6rem; font-size: 0.62rem; }
+  /* The pane's Refresh control, in its own row above the Scope zone so it
+     survives a fold, a single-Vault instance, and the mobile drawer alike.
+     The doubled class beats `.ui-btn`, which is declared later. */
+  .explorer-refresh-bar { display: flex; justify-content: flex-end; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--rule); }
+  .ui-btn.explorer-refresh { flex: 0 0 auto; padding: 0.28rem 0.6rem; font-size: 0.62rem; }
   .side-scope-keycap {
     flex: 0 0 auto; font-family: var(--font-mono); font-size: 0.6rem;
     color: var(--muted); border: 1px solid var(--rule); padding: 0.02rem 0.32rem; border-radius: 999px;
@@ -1937,7 +1936,7 @@
     <section class="doc-section" id="sidebar">
       <div class="doc-section-num">§05</div>
       <h2>Sidebar (Explorer)</h2>
-      <p class="blurb"><b>Four zones:</b> the Scope zone (#138), a fixed rail of whole-vault destinations, the scrolling note navigation, and the create action pinned at the bottom. <b>Only the third scrolls</b> &mdash; scope, rail and footer never move. The rail lives inside the sidebar rather than the topbar on purpose: the topbar&rsquo;s four mobile slots are a hard budget, and the drawer sits outside it. The Scope zone is the one conditional zone: absent at one enabled Vault and absent below 920px, where the topbar&rsquo;s scope row carries it instead (<a href="#mobile-scope-row">§30</a>). One exception, from #150: at a single Vault it stays on screen while first-run scanning or indexing is running, purely to hold that progress reading (<a href="#vault-slot">§27</a>) &mdash; the zone is where progress is reported, so it outlives its own visibility rule for as long as there is progress to report. At zero Vaults it holds its place too, reading <code>All Vaults</code> with no rows beneath it, in neutral ink.</p>
+      <p class="blurb"><b>The pane opens with the Refresh control&rsquo;s own row, then four zones:</b> the Scope zone (#138), a fixed rail of whole-vault destinations, the scrolling note navigation, and the create action pinned at the bottom. <b>Only the third scrolls</b> &mdash; scope, rail and footer never move. The rail lives inside the sidebar rather than the topbar on purpose: the topbar&rsquo;s four mobile slots are a hard budget, and the drawer sits outside it. The Scope zone is the one conditional zone: absent at one enabled Vault and absent below 920px, where the topbar&rsquo;s scope row carries it instead (<a href="#mobile-scope-row">§30</a>). One exception, from #150: at a single Vault it stays on screen while first-run scanning or indexing is running, purely to hold that progress reading (<a href="#vault-slot">§27</a>) &mdash; the zone is where progress is reported, so it outlives its own visibility rule for as long as there is progress to report. At zero Vaults it holds its place too, reading <code>All Vaults</code> with no rows beneath it, in neutral ink.</p>
 
       <p class="blurb"><b>The Scope zone takes <span class="key">--paper</span>, one step lighter than the sidebar&rsquo;s own <span class="key">--bg</span>.</b> It is the only zone with a ground of its own, and it earns one: pinned above a scrolling list, it needs to read as a fixed shelf rather than as the first few rows of the navigation that moves beneath it. The token inverts correctly &mdash; <span class="key">--paper</span> is the lighter neighbour of <span class="key">--bg</span> in both themes &mdash; so the shelf lifts in light and in dark without a second declaration. The rail below it stays on the pane ground; two stacked shelves would be a stripe, not a hierarchy.</p>
 
@@ -2045,31 +2044,31 @@
       <p class="blurb"><b>The footer holds one action.</b> Three things in it and it becomes the grab-bag the header used to be. Contextual creation stays on the folder rows as a <code>+</code>.</p>
       <p class="blurb">Settings now has a destination (<a href="#settings">§27</a>) and is a live link. It keeps its own slot at the far edge of the rail &mdash; <span class="key">margin-left: auto</span> &mdash; because it is the one rail item that leaves the vault rather than reframing it. <b>When the page is unavailable the item is not rendered at all</b>, rather than shown dimmed: the earlier reserved-and-disabled treatment was replaced once there was something to link to, since a permanently dead control reads as a bug no matter how well it is labelled.</p>
 
-      <h3 class="doc-sub">Scope zone refresh</h3>
-      <p class="blurb"><b>The Scope zone&rsquo;s Refresh control is a word, not a glyph, and it never folds away.</b> It shares the head&rsquo;s row, so the <i>make it fresh now</i> action &mdash; ask the server to admit one Index turn for the live scope, then re-read the tree and the changed-on-disk list &mdash; is one click from either state. It is sized to the zone&rsquo;s compact register rather than the standard button: <span class="key">0.62rem</span> in <span class="key">0.28rem 0.6rem</span>, on the documented <span class="key">.ui-btn</span>/<span class="key">.ui-button</span> base. While the request is out it reads <b>Refreshing&hellip;</b> and carries <span class="key">aria-busy="true"</span>, disabled so a second click cannot queue a duplicate turn. When the app cannot act &mdash; the read-only demo, or a Vault collection with write mode off &mdash; it stays in place, disabled, with the scope and the reason in its <span class="key">title</span> rather than vanishing: the control is informative while it cannot act, and a dimmed word that says why is not a dead affordance.</p>
+      <h3 class="doc-sub">Pane refresh</h3>
+      <p class="blurb"><b>The pane&rsquo;s Refresh control is a word, not a glyph, and it is never contingent on the Scope zone.</b> It sits in its own row at the top of the explorer pane, above the Scope zone and above the rail that stands in that zone&rsquo;s place, so the <i>make it fresh now</i> action &mdash; ask the server to admit one Index turn for the live scope, then re-read the tree and the changed-on-disk list &mdash; is reachable at any Vault count, at any scope, on desktop and inside the mobile drawer. It is sized to the pane&rsquo;s compact register rather than the standard button: <span class="key">0.62rem</span> in <span class="key">0.28rem 0.6rem</span>, on the documented <span class="key">.ui-btn</span>/<span class="key">.ui-button</span> base. While the request is out it reads <b>Refreshing&hellip;</b> and carries <span class="key">aria-busy="true"</span>, disabled so a second click cannot queue a duplicate turn. When the app cannot act &mdash; the read-only demo, or a Vault collection with write mode off &mdash; it stays in place, disabled, with the scope and the reason in its <span class="key">title</span> rather than vanishing: the control is informative while it cannot act, and a dimmed word that says why is not a dead affordance.</p>
       <div class="stage" style="padding:0;">
         <div class="sidebar-zoned" style="height:auto;">
+          <div class="explorer-refresh-bar">
+            <button class="ui-btn ghost explorer-refresh" title="Refresh All Vaults">Refresh</button>
+          </div>
           <div class="side-scope" data-open="true">
-            <div class="side-scope-bar">
-              <div class="side-head">
-                <span class="side-caret"></span>
-                <span class="side-label">Scope</span>
-                <span class="side-scope-keycap">V</span>
-                <span class="side-rule"></span>
-                <span class="side-count">03</span>
-              </div>
-              <button class="ui-btn ghost side-scope-refresh" title="Refresh All Vaults">Refresh</button>
+            <div class="side-head">
+              <span class="side-caret"></span>
+              <span class="side-label">Scope</span>
+              <span class="side-scope-keycap">V</span>
+              <span class="side-rule"></span>
+              <span class="side-count">03</span>
             </div>
             <button class="side-scope-row on"><span class="grow">All Vaults</span><span class="side-count">3</span></button>
             <button class="side-scope-row"><span class="grow">Kitchen</span><span class="side-count">126</span></button>
           </div>
         </div>
       </div>
-      <div class="tag-row"><span class="key">.scope-zone-bar</span><span class="key">.ui-button.scope-zone-refresh</span></div>
+      <div class="tag-row"><span class="key">.explorer-refresh-bar</span><span class="key">.ui-button.explorer-refresh</span></div>
 
       <div class="tag-row">
         <span class="key">.explorer-pane</span><span class="key">.explorer-rail</span><span class="key">.explorer-rail-item</span><span class="key">.explorer-rail-item.active</span><span class="key">.explorer-rail-item.is-disabled</span><span class="key">.explorer-nav</span><span class="key">.explorer-footer</span>
-        <span class="key">.scope-zone</span><span class="key">.scope-zone .scope-zone-head</span><span class="key">.scope-zone-bar</span><span class="key">.ui-button.scope-zone-refresh</span><span class="key">.scope-zone-keycap</span><span class="key">.scope-zone-current</span><span class="key">.scope-zone-viewing-line</span><span class="key">.scope-zone-list</span><span class="key">.scope-row</span><span class="key">.scope-row.is-selected</span><span class="key">.scope-row-label</span><span class="key">.scope-row-viewing</span>
+        <span class="key">.scope-zone</span><span class="key">.scope-zone .scope-zone-head</span><span class="key">.scope-zone-keycap</span><span class="key">.scope-zone-current</span><span class="key">.scope-zone-viewing-line</span><span class="key">.scope-zone-list</span><span class="key">.scope-row</span><span class="key">.scope-row.is-selected</span><span class="key">.scope-row-label</span><span class="key">.scope-row-viewing</span>
         <span class="key">.side-section</span><span class="key">.side-head</span><span class="key">.side-label</span><span class="key">.side-rule</span><span class="key">.side-count</span><span class="key">.side-caret</span>
         <span class="key">.folder-item[data-open]</span><span class="key">.folder-row</span><span class="key">.caret</span><span class="key">.children</span>
         <span class="key">.note-link</span><span class="key">.note-link.active-note</span><span class="key">.idx</span>
