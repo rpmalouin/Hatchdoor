@@ -60,6 +60,7 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `bc54bda` | `docs`: genericize host-specific identifiers (this repo is public) |
 | `288a5cc` | `docs(security)`: say why the deployment docs use placeholders |
 | `5bbac2f` | `feat(ui)`: add a spelled-out Refresh control to the Scope zone, backed by the existing `POST /api/v1/vaults/{vault_id}/refresh` route |
+| `a64b0fe` | `fix(ui)`: move the Refresh control to the pane's own row, so it is on screen at any Vault count (the Scope zone is absent at one Vault) |
 
 ## Removal of the WebDAV vault source
 
