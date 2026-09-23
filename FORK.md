@@ -2,7 +2,7 @@
 
 ## What this fork is
 
-> **Placeholders.** This repo is public, so host-specific values are not published: `<repo>` = local clone of this fork · `<stack-dir>` = directory holding the deployment's compose file · `<smb-mount>` = host mount of the vault share · `<mac-mini-ip>` / `<mac-vault-dir>` = the Mac's LAN address and the vault folder on it · `<credentials-file>` = the 0600 SMB credentials file · `<parked-drive-tooling>` / `<opsbrain-checkout>` = other host-local directories.
+> **Placeholders.** This repo is public, so host-specific values are not published: `<repo>` = local clone of this fork · `<stack-dir>` = directory holding the deployment's compose file · `<smb-mount>` = host mount of the vault share · `<mac-ip>` / `<mac-vault-dir>` = the Mac's LAN address and the vault folder on it · `<credentials-file>` = the 0600 SMB credentials file · `<parked-drive-tooling>` / `<opsbrain-checkout>` = other host-local directories.
 
 `rpmalouin/Hatchdoor` is a fork of [`BatterWorks/Hatchdoor`](https://github.com/BatterWorks/Hatchdoor).
 It tracks upstream `main` and carries a small, documented set of deltas on top:
@@ -290,7 +290,7 @@ fork code at all (*Removal of the WebDAV vault source* above).
 
 1. **`hatchdoor`** (image `hatchdoor:local`, built from THIS fork — the `build:`
    context is `<repo>`). HTTP on `:42824`, MCP on `/mcp`. The vault is
-   bound in from the Mac Mini over SMB (`SMB_VAULT_PATH` → `/data/smb-vault`) — and
+   bound in from the Mac Studio over SMB (`SMB_VAULT_PATH` → `/data/smb-vault`) — and
    `SMB_VAULT_PATH` is `<smb-mount>/MyObsidian`, the share root, since the
    vault left the Google Drive domain on the Mac (2026-09-16). Changing it needs a
    container recreate, not a restart: a stale bind comes up healthy and indexes 0 notes.

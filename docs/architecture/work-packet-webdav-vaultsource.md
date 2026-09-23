@@ -17,7 +17,7 @@ Related: FORK.md (fork delta), ADR-01/03/10/11 (constraints).
 ## Outcome
 
 Hatchdoor can attach a Vault whose authoritative content lives on a WebDAV
-server (e.g. `rclone serve webdav` on a Mac Mini, or any RFC-4918 endpoint),
+server (e.g. `rclone serve webdav` on a Mac, or any RFC-4918 endpoint),
 browse/search it, and write notes back — as a first-class `VaultSource::WebDav`.
 
 ## Critical design fact (non-negotiable): ADR-01 governs reads

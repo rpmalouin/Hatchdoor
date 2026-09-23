@@ -24,7 +24,7 @@ as sensitive:
 
 This repository is **public**, and its deployment documentation is written for that
 audience. Where the reference deployment's own values would otherwise appear, the docs use
-placeholders (`<repo>`, `<stack-dir>`, `<smb-mount>`, `<mac-mini-ip>`, `<mac-vault-dir>`,
+placeholders (`<repo>`, `<stack-dir>`, `<smb-mount>`, `<mac-ip>`, `<mac-vault-dir>`,
 `<credentials-file>`, and similar), defined in the *Placeholders* note at the top of
 [`FORK.md`](FORK.md) and [`HERMES.md`](HERMES.md).
 

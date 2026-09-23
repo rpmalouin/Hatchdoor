@@ -10,14 +10,14 @@ skills installed, they are the maintained copies of this knowledge.
 Companion files: `MEMORY.md` (repo + live-stack context), `SPEC.md`
 (application structure), `README.md` (user docs).
 
-> **Placeholders.** This repo is public, so host-specific values are not published: `<repo>` = local clone of this fork · `<stack-dir>` = directory holding the deployment's compose file · `<smb-mount>` = host mount of the vault share · `<mac-mini-ip>` / `<mac-vault-dir>` = the Mac's LAN address and the vault folder on it · `<credentials-file>` = the 0600 SMB credentials file · `<parked-drive-tooling>` / `<opsbrain-checkout>` = other host-local directories.
+> **Placeholders.** This repo is public, so host-specific values are not published: `<repo>` = local clone of this fork · `<stack-dir>` = directory holding the deployment's compose file · `<smb-mount>` = host mount of the vault share · `<mac-ip>` / `<mac-vault-dir>` = the Mac's LAN address and the vault folder on it · `<credentials-file>` = the 0600 SMB credentials file · `<parked-drive-tooling>` / `<opsbrain-checkout>` = other host-local directories.
 
 ## 1. Topology (what Hatchdoor is, where it runs)
 
 - Container `hatchdoor` (image `hatchdoor:local`, built from the fork at
   `<repo>`), HTTP on port 42824, MCP route `http://127.0.0.1:42824/mcp`.
-- The vault is the **real Obsidian vault on the Mac Mini**, reached over SMB — no
-  WebDAV, no rclone, no mirror. `/etc/fstab` mounts `//<mac-mini-ip>/Data` at
+- The vault is the **real Obsidian vault on the Mac Studio**, reached over SMB — no
+  WebDAV, no rclone, no mirror. `/etc/fstab` mounts `//<mac-ip>/Data` at
   `<smb-mount>` (cifs, `credentials=<credentials-file>` (0600),
   `uid=65532,gid=65532,noperm,file_mode=0770,dir_mode=0770,soft,_netdev,nofail`), and
   the stack binds the vault's folder into the container as `/data/smb-vault`
