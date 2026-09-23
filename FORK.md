@@ -59,6 +59,7 @@ merge; the table lists the fork's own commits since `e631857`, in order:
 | `65f6d15` | `docs`: repoint the vault records to the new SMB path (MyObsidian at the share root) |
 | `bc54bda` | `docs`: genericize host-specific identifiers (this repo is public) |
 | `288a5cc` | `docs(security)`: say why the deployment docs use placeholders |
+| `a0f27e4` | `docs`: the reference deployment's Mac is the Mac Studio (placeholder `<mac-mini-ip>` → `<mac-ip>`) |
 
 ## Removal of the WebDAV vault source
 
